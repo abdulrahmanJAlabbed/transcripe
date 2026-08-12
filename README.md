@@ -223,11 +223,35 @@ transcripe --self-test --slow   # also exercise the transcription pipeline
 | `TRANSCRIPE_BEAM`        | `5`                | Whisper beam size                                   |
 | `TRANSCRIPE_WORKERS`     | `min(4, CPUs)`     | Parallel workers for batch conversions             |
 | `TRANSCRIPE_DOC_BACKEND` | auto               | Force document→PDF backend (`libreoffice` / `msoffice`) |
+| `TRANSCRIPE_HOST`        | `127.0.0.1`        | Studio bind address — `0.0.0.0` exposes it to your LAN  |
+| `TRANSCRIPE_PORT`        | `8000`             | Studio port                                             |
+| `TRANSCRIPE_ORIGINS`     | site + dev ports   | Comma-separated CORS origins for the browser studio     |
+| `TRANSCRIPE_NO_OPEN`     | unset              | Set to `1` to stop the studio opening a browser tab      |
 
 Example — fast CPU transcription:
 ```bash
 TRANSCRIPE_MODEL=small TRANSCRIPE_DEVICE=cpu transcripe lecture.mp4 --to txt
 ```
+
+---
+
+## 🖥️ Studio (browser + phone)
+
+Beyond the CLI, Transcripe ships a local studio for the everyday jobs —
+converting media and grabbing links.
+
+```bash
+cd web && npm install && npm run build && cd ..
+python server.py            # serves the studio at http://localhost:8000/transcripe/
+```
+
+One process, one command: it serves the built UI *and* the conversion API, and
+opens your browser. Drop a file anywhere on the page, or paste a link anywhere,
+and it converts locally. Chrome and Edge offer to install it as a desktop app.
+
+A phone app lives in [`mobile/`](mobile/README.md) — Expo Go, same design, same
+engine over your Wi-Fi. Start the engine with `TRANSCRIPE_HOST=0.0.0.0` so the
+phone can reach it.
 
 ---
 

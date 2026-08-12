@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "Transcripe",
+    "slug": "transcripe",
+    "scheme": "transcripe",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "primaryColor": "#c8502a",
+    "backgroundColor": "#faf9f6",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#faf9f6"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "work.alabed.transcripe",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "work.alabed.transcripe",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#c8502a"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "usesCleartextTraffic": true
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Transcripe reads the videos and photos you pick so your local engine can convert them."
+        }
+      ]
+    ]
+  }
+}
