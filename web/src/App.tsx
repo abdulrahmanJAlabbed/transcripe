@@ -216,17 +216,23 @@ export function App() {
      "running but locked" reads differently from "not running". */
   useEffect(() => {
     let alive = true;
+    // One slow reply on a loaded machine shouldn't announce the engine as
+    // dead while it is busy converting; take two misses to call it offline.
+    let misses = 0;
     const check = async () => {
       try {
         const res = await api("/api/health", {
-          signal: AbortSignal.timeout(2500)
+          signal: AbortSignal.timeout(8000)
         });
         const info = res.ok ? await res.json().catch(() => null) : null;
         if (!alive) return;
+        misses = 0;
         setEngineOnline(res.ok);
         setEngineLocked(!!info?.auth_required && !info?.authorized);
       } catch {
-        if (alive) setEngineOnline(false);
+        if (!alive) return;
+        misses += 1;
+        if (misses >= 2) setEngineOnline(false);
       }
     };
     check();

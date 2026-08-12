@@ -39,6 +39,24 @@ export async function health(signal?: AbortSignal): Promise<Health | null> {
 
 /** Ask the engine for a link download, then stream it straight to disk —
  *  never buffer a whole video in JS memory. */
+/** Results live in the cache; without this they pile up until the OS decides
+ *  to reclaim, which on a phone full of videos can be a lot of storage. */
+export function pruneCache(maxAgeMs = 24 * 60 * 60 * 1000): void {
+  try {
+    const dir = new Directory(Paths.cache, "transcripe");
+    if (!dir.exists) return;
+    const cutoff = Date.now() - maxAgeMs;
+    for (const entry of dir.list()) {
+      // modificationTime is already epoch milliseconds.
+      if (entry instanceof File && (entry.modificationTime ?? 0) < cutoff) {
+        entry.delete();
+      }
+    }
+  } catch {
+    /* best effort — never block the app over housekeeping */
+  }
+}
+
 async function pull(job: Delivered): Promise<File> {
   const dir = new Directory(Paths.cache, "transcripe");
   if (!dir.exists) dir.create({ intermediates: true });

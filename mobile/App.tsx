@@ -34,7 +34,14 @@ import {
   SafeAreaProvider,
   useSafeAreaInsets
 } from "react-native-safe-area-context";
-import { API, convertFile, convertUrl, health, transcribeFile } from "./src/api";
+import {
+  API,
+  convertFile,
+  convertUrl,
+  health,
+  pruneCache,
+  transcribeFile
+} from "./src/api";
 import {
   detectPlatform,
   extOf,
@@ -102,14 +109,28 @@ function Studio() {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
   }, [fontsLoaded]);
 
+  /* Yesterday's results are already saved or forgotten — don't hoard them. */
+  useEffect(() => {
+    pruneCache();
+  }, []);
+
   /* Engine heartbeat. */
   useEffect(() => {
     let alive = true;
+    // Two misses before calling it offline: a phone on flaky Wi-Fi (or a
+    // laptop mid-transcode) shouldn't be told the engine died.
+    let misses = 0;
     const ping = async () => {
       const info = await health();
       if (!alive) return;
-      setEngineOn(!!info);
-      setEngineLocked(!!info?.auth_required && !info?.authorized);
+      if (info) {
+        misses = 0;
+        setEngineOn(true);
+        setEngineLocked(!!info.auth_required && !info.authorized);
+      } else {
+        misses += 1;
+        if (misses >= 2) setEngineOn(false);
+      }
     };
     ping();
     const t = setInterval(ping, 15000);
