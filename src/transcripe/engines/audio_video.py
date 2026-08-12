@@ -139,12 +139,20 @@ def convert_media(input_path: Path, target_format: str, console: Console, output
 
     elif target_format in video_targets:
         if target_format == "mp4":
+            # -pix_fmt yuv420p: force 4:2:0 chroma so browsers/QuickTime/phones
+            # can play it (yuv444/422 sources otherwise produce a valid but
+            # unplayable file). +faststart: moov atom up front for web streaming.
             cmd += ["-codec:v", "libx264", "-preset", "medium", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                     "-codec:a", "aac", "-b:a", "192k"]
         elif target_format == "webm":
             cmd += ["-codec:v", "libvpx-vp9", "-crf", "30", "-b:v", "0",
-                    "-codec:a", "libopus"]
-        # Other video formats: let ffmpeg auto-select codecs
+                    "-pix_fmt", "yuv420p", "-codec:a", "libopus"]
+        elif target_format in ("mov", "mkv", "avi"):
+            # Default to widely-playable H.264 4:2:0 rather than ffmpeg's guess.
+            cmd += ["-codec:v", "libx264", "-preset", "medium", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-codec:a", "aac", "-b:a", "192k"]
+        # else: let ffmpeg auto-select codecs
 
     cmd.append(str(out_path))
 
@@ -219,6 +227,7 @@ def compress_video(input_path: Path, quality: str, console: Console, output_path
         result = subprocess.run(
             [ffmpeg, "-i", str(input_path),
              "-codec:v", "libx264", "-preset", "slow", "-crf", crf,
+             "-pix_fmt", "yuv420p",
              "-codec:a", "aac", "-b:a", "128k",
              "-movflags", "+faststart",
              "-y", str(out_path)],
