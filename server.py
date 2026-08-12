@@ -9,11 +9,14 @@ from datetime import datetime
 from urllib.parse import quote
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
 app = FastAPI(title="Transcripe Scalable Engine API")
+
+WEB_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "dist")
 
 # Same-origin in production (served under alabed.work/transcripe/ + /api/),
 # plus localhost for dev. allow_credentials with "*" is invalid, so we list origins.
@@ -271,6 +274,25 @@ async def convert_file(file: UploadFile = File(...), targetFormat: str = Form("t
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+# Serve the built studio from this same process — one command, one app.
+# Mounted last so /api/* routes always win.
+if os.path.isdir(WEB_DIST):
+    app.mount("/transcripe", StaticFiles(directory=WEB_DIST, html=True), name="studio")
+
+    @app.get("/", include_in_schema=False)
+    def studio_redirect():
+        return RedirectResponse("/transcripe/")
+
 if __name__ == "__main__":
+    import threading
+    import webbrowser
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+
+    port = int(os.environ.get("TRANSCRIPE_PORT", "8000"))
+    # 0.0.0.0 exposes the studio to your LAN (phones, Expo Go dev builds).
+    host = os.environ.get("TRANSCRIPE_HOST", "127.0.0.1")
+    if os.path.isdir(WEB_DIST) and os.environ.get("TRANSCRIPE_NO_OPEN") != "1":
+        threading.Timer(
+            0.9, lambda: webbrowser.open(f"http://127.0.0.1:{port}/transcripe/")
+        ).start()
+    uvicorn.run(app, host=host, port=port)
