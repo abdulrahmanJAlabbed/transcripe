@@ -3,8 +3,11 @@ import re
 import glob
 import random
 import shutil
+import secrets
 import tempfile
+import threading
 import subprocess
+import time
 from datetime import datetime
 from urllib.parse import quote
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -23,7 +26,10 @@ WEB_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "dist
 ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get(
         "TRANSCRIPE_ORIGINS",
-        "https://alabed.work,https://www.alabed.work,http://localhost:5173,http://127.0.0.1:5173",
+        # site, Vite dev, Expo web dev (native apps aren't subject to CORS)
+        "https://alabed.work,https://www.alabed.work,"
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:8081,http://localhost:19006",
     ).split(",") if o.strip()
 ]
 app.add_middleware(
@@ -54,6 +60,52 @@ class UrlConvertRequest(BaseModel):
     url: str
     format: str = "mp3"
     useBrowserCookies: bool = True
+    # "stream" hands the bytes back on this request (browser default).
+    # "link" parks the result and returns a one-shot URL, so native clients
+    # can stream it straight to disk instead of buffering it in memory.
+    deliver: str = "stream"
+
+
+# --- One-shot result handoff for native clients ---
+RESULT_TTL_SECONDS = 900
+_results: dict = {}
+_results_lock = threading.Lock()
+
+
+def _reap_results() -> None:
+    now = time.time()
+    with _results_lock:
+        stale = [t for t, r in _results.items() if r["expires"] < now]
+        for token in stale:
+            shutil.rmtree(_results.pop(token)["dir"], ignore_errors=True)
+
+
+def stash_result(path: str, temp_dir: str, filename: str) -> dict:
+    """Park a finished file behind a single-use token."""
+    _reap_results()
+    token = secrets.token_urlsafe(24)
+    with _results_lock:
+        _results[token] = {
+            "path": path,
+            "dir": temp_dir,
+            "name": filename,
+            "expires": time.time() + RESULT_TTL_SECONDS,
+        }
+    return {"download": f"/api/result/{token}", "filename": filename}
+
+
+@app.get("/api/result/{token}")
+def fetch_result(token: str):
+    with _results_lock:
+        entry = _results.pop(token, None)
+    if not entry or not os.path.exists(entry["path"]):
+        raise HTTPException(status_code=404, detail="Result expired or already downloaded")
+    return FileResponse(
+        path=entry["path"],
+        filename=entry["name"],
+        media_type="application/octet-stream",
+        background=BackgroundTask(shutil.rmtree, entry["dir"], ignore_errors=True),
+    )
 
 def get_rotated_user_agent() -> str:
     return random.choice(USER_AGENTS)
@@ -183,6 +235,9 @@ async def convert_url(req: UrlConvertRequest):
         
         encoded_filename = quote(filename)
 
+        if req.deliver == "link":
+            return stash_result(output_file, temp_dir, filename)
+
         headers = {
             "Access-Control-Expose-Headers": "Content-Disposition",
             "Content-Disposition": f'attachment; filename="{safe_ascii}"; filename*=UTF-8\'\'{encoded_filename}'
@@ -206,7 +261,11 @@ async def convert_url(req: UrlConvertRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/convert/file")
-async def convert_file(file: UploadFile = File(...), targetFormat: str = Form("txt")):
+async def convert_file(
+    file: UploadFile = File(...),
+    targetFormat: str = Form("txt"),
+    deliver: str = Form("stream"),
+):
     target_fmt = re.sub(r"[^\w]", "", targetFormat.lower()) or "txt"
     temp_dir = tempfile.mkdtemp(prefix="transcripe_file_")
 
@@ -253,6 +312,8 @@ async def convert_file(file: UploadFile = File(...), targetFormat: str = Form("t
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            if deliver == "link":
+                return stash_result(output_path, temp_dir, output_filename)
             return FileResponse(
                 path=output_path,
                 filename=output_filename,
