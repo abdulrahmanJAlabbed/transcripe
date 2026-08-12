@@ -34,7 +34,7 @@ import {
   SafeAreaProvider,
   useSafeAreaInsets
 } from "react-native-safe-area-context";
-import { API, convertFile, convertUrl, health } from "./src/api";
+import { API, convertFile, convertUrl, health, transcribeFile } from "./src/api";
 import {
   detectPlatform,
   extOf,
@@ -42,6 +42,7 @@ import {
   formatBytes,
   kindOf,
   TARGETS,
+  TEXT_TARGETS,
   URL_TARGETS,
   type Kind
 } from "./src/formats";
@@ -233,6 +234,18 @@ function Studio() {
           { url: url.trim(), format: target, useBrowserCookies: useCookies },
           controller.signal
         );
+      } else if (TEXT_TARGETS.includes(target)) {
+        setStatus(`${picked!.name} → .${target}`);
+        out = await transcribeFile(
+          {
+            uri: picked!.uri,
+            name: picked!.name,
+            mimeType: picked!.mimeType,
+            format: target
+          },
+          setStatus,
+          controller.signal
+        );
       } else {
         setStatus(`${picked!.name} → .${target}`);
         out = await convertFile(
@@ -300,6 +313,8 @@ function Studio() {
       : kind && kind !== "other"
       ? [...TARGETS[kind].main, ...(TARGETS[kind].audio ?? [])]
       : [];
+  const textTargets =
+    mode === "file" && kind && kind !== "other" ? TARGETS[kind].text ?? [] : [];
 
   if (!fontsLoaded) {
     return (
@@ -482,6 +497,22 @@ function Studio() {
               </View>
             )}
 
+            {textTargets.length > 0 && !!picked && (
+              <View style={{ gap: 9 }}>
+                <Label>transcribe — whisper on your laptop</Label>
+                <View style={st.chips}>
+                  {textTargets.map((t) => (
+                    <Chip
+                      key={t}
+                      label={`.${t}`}
+                      active={target === t}
+                      onPress={() => setTarget(t)}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+
             {mode === "file" && picked && kind === "other" && (
               <View style={st.note}>
                 <Body style={{ fontSize: 13, color: c.ink2 }}>
@@ -576,6 +607,8 @@ function Studio() {
                     ? `Fetch & convert to .${target}`
                     : kind === "other"
                     ? "Not supported on mobile"
+                    : TEXT_TARGETS.includes(target)
+                    ? `Transcribe to .${target}`
                     : `Convert to .${target}`
                 }
                 onPress={run}

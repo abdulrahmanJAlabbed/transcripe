@@ -35,12 +35,22 @@ function kindOf(ext: string): Kind {
   return "other";
 }
 
-/* Web engine targets per input kind; "other" falls back to the CLI. */
-const TARGETS: Record<Exclude<Kind, "other">, { main: string[]; audio?: string[] }> = {
-  audio: { main: ["mp3", "wav", "m4a", "flac", "ogg", "opus"] },
-  video: { main: ["mp4", "webm", "mov", "mkv"], audio: ["mp3", "wav", "m4a"] },
+/* Web engine targets per input kind; "other" falls back to the CLI.
+   `text` targets go to Whisper rather than ffmpeg. */
+const TARGETS: Record<
+  Exclude<Kind, "other">,
+  { main: string[]; audio?: string[]; text?: string[] }
+> = {
+  audio: { main: ["mp3", "wav", "m4a", "flac", "ogg", "opus"], text: ["srt", "txt"] },
+  video: {
+    main: ["mp4", "webm", "mov", "mkv"],
+    audio: ["mp3", "wav", "m4a"],
+    text: ["srt", "txt"]
+  },
   image: { main: ["png", "jpg", "webp", "bmp", "tiff"] }
 };
+
+const TEXT_TARGETS = ["srt", "txt"];
 
 const URL_TARGETS = ["mp4", "mp3", "m4a", "wav", "flac"];
 
@@ -142,6 +152,7 @@ type Mode = "file" | "url";
 /* Engines the web studio can run directly — clicking their grid cell arms
    the converter; every other cell copies its CLI one-liner instead. */
 const WEB_ABLE: Record<string, Mode> = {
+  transcribe: "file",
   "social-downloader": "url",
   "media-convert": "file",
   "image-resize-compress": "file"
@@ -401,11 +412,51 @@ export function App() {
     return [{ name, url: URL.createObjectURL(blob) }];
   };
 
+  /* Whisper takes minutes, so transcription is a job: start it, poll it,
+     then collect the file through the same one-shot link. */
+  const runTranscribe = async (
+    file: File,
+    prefix: string,
+    signal: AbortSignal
+  ): Promise<OutFile> => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("targetFormat", target);
+    setStatusLabel(`${prefix}${file.name} → .${target}`);
+    const started = await api("/api/transcribe", { method: "POST", body, signal });
+    if (!started.ok) throw new Error(`${file.name}: ${await failDetail(started)}`);
+    const { job, model } = await started.json();
+
+    for (;;) {
+      if (signal.aborted) throw new DOMException("aborted", "AbortError");
+      await new Promise((r) => setTimeout(r, 1500));
+      const res = await api(`/api/jobs/${job}`, { signal });
+      if (!res.ok) throw new Error(`${file.name}: ${await failDetail(res)}`);
+      const state = await res.json();
+      if (state.status === "error") throw new Error(`${file.name}: ${state.detail}`);
+      if (state.stage) setStatusLabel(`${prefix}${state.stage}`);
+      else setStatusLabel(`${prefix}transcribing ${file.name} with ${model}`);
+      if (state.status === "done") {
+        const dl = await api(state.download, { signal });
+        if (!dl.ok) throw new Error(`${file.name}: could not fetch the transcript`);
+        return {
+          name: state.filename,
+          url: URL.createObjectURL(await dl.blob())
+        };
+      }
+    }
+  };
+
   const runFileConvert = async (signal: AbortSignal): Promise<OutFile[]> => {
     const results: OutFile[] = [];
+    const transcribing = TEXT_TARGETS.includes(target);
     for (let i = 0; i < entries.length; i++) {
       const { file } = entries[i];
       const prefix = entries.length > 1 ? `${i + 1} of ${entries.length} · ` : "";
+      if (transcribing) {
+        results.push(await runTranscribe(file, prefix, signal));
+        continue;
+      }
       setStatusLabel(`${prefix}${file.name} → .${target}`);
       const body = new FormData();
       body.append("file", file);
@@ -558,6 +609,21 @@ export function App() {
               ))}
             </>
           )}
+          {opts.text && (
+            <>
+              <span className="chip-divider">transcribe</span>
+              {opts.text.map((fmt) => (
+                <button
+                  key={fmt}
+                  className={`chip ${target === fmt ? "active" : ""}`}
+                  onClick={() => setTarget(fmt)}
+                  title="Whisper, running on this machine"
+                >
+                  .{fmt}
+                </button>
+              ))}
+            </>
+          )}
         </div>
       </div>
     );
@@ -627,8 +693,8 @@ export function App() {
             Every file, <em>quietly</em> transformed.
           </h1>
           <p className="lede reveal d3">
-            Transcribe lectures, pull reels, merge PDFs, vectorize logos —
-            sixteen engines that run on your machine and answer to no cloud.
+            Transcribe a lecture, pull a reel, convert anything — sixteen
+            engines that run on your machine and answer to no cloud.
           </p>
 
           <div className="card reveal d4" ref={cardRef}>
@@ -892,6 +958,8 @@ export function App() {
                   ? `Fetch & convert${target ? ` to .${target}` : ""}`
                   : kind === "other"
                   ? "Use the CLI for this format"
+                  : TEXT_TARGETS.includes(target)
+                  ? `Transcribe to .${target}`
                   : `Convert${target ? ` to .${target}` : ""}`}
                 <ArrowRight className="arrow" size={17} />
               </button>
@@ -909,8 +977,9 @@ export function App() {
               Sixteen engines, <em>one</em> keystroke each.
             </h2>
             <p>
-              The studio above covers media and images. Everything here ships in
-              the CLI — same machine, same privacy, more muscle.
+              The studio above handles media, images, links, and Whisper
+              transcription. Everything here ships in the CLI — same machine,
+              same privacy, more muscle.
             </p>
           </div>
 

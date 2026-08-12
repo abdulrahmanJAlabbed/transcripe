@@ -65,6 +65,52 @@ export async function convertUrl(
   return pull((await res.json()) as Delivered);
 }
 
+/** Whisper runs for minutes, so this is a job: start, poll, then pull. */
+export async function transcribeFile(
+  input: { uri: string; name: string; mimeType?: string; format: string },
+  onStage: (stage: string) => void,
+  signal?: AbortSignal
+): Promise<File> {
+  const body = new FormData();
+  body.append("file", {
+    uri: input.uri,
+    name: input.name,
+    type: input.mimeType || "application/octet-stream"
+  } as unknown as Blob);
+  body.append("targetFormat", input.format);
+
+  const started = await fetch(`${API}/api/transcribe`, {
+    method: "POST",
+    headers: authHeaders(),
+    body,
+    signal
+  });
+  if (!started.ok) throw new Error(await detail(started));
+  const { job, model } = (await started.json()) as { job: string; model: string };
+
+  for (;;) {
+    if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+    await new Promise((r) => setTimeout(r, 1500));
+    const res = await fetch(`${API}/api/jobs/${job}`, {
+      headers: authHeaders(),
+      signal
+    });
+    if (!res.ok) throw new Error(await detail(res));
+    const state = (await res.json()) as {
+      status: string;
+      stage?: string;
+      detail?: string;
+      download?: string;
+      filename?: string;
+    };
+    if (state.status === "error") throw new Error(state.detail || "Transcription failed");
+    onStage(state.stage || `transcribing with ${model}`);
+    if (state.status === "done" && state.download && state.filename) {
+      return pull({ download: state.download, filename: state.filename });
+    }
+  }
+}
+
 export async function convertFile(
   input: { uri: string; name: string; mimeType?: string; format: string },
   signal?: AbortSignal

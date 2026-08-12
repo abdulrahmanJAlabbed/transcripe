@@ -62,9 +62,11 @@ The dot next to the wordmark is the engine heartbeat, polled every 15 seconds:
 | red — *engine off* | engine not running, wrong IP in `.env`, different Wi-Fi, or a firewall blocking port 8000 |
 
 **From my phone** picks a video or photo from the camera roll (or any file via
-*Browse files instead*) and converts it — audio, video, and image formats.
-Anything else (PDF, DOCX, archives, 3D models) belongs to the desktop CLI, and
-the app says so instead of pretending.
+*Browse files instead*) and converts it — audio, video, and image formats, plus
+**transcription**: choose `.srt` or `.txt` and Whisper runs on the laptop while
+the app polls, so a long recording can't time out. Anything else (PDF, DOCX,
+archives, 3D models) belongs to the desktop CLI, and the app says so instead of
+pretending.
 
 **From a link** takes a YouTube / TikTok / Instagram / X / Spotify URL and
 fetches it as video or audio. Switching to that tab offers whatever link is on

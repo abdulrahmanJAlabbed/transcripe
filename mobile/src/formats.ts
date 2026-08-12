@@ -14,14 +14,21 @@ export function kindOf(ext: string): Kind {
   return "other";
 }
 
+/** `text` targets go to Whisper on the laptop rather than ffmpeg. */
 export const TARGETS: Record<
   Exclude<Kind, "other">,
-  { main: string[]; audio?: string[] }
+  { main: string[]; audio?: string[]; text?: string[] }
 > = {
-  audio: { main: ["mp3", "wav", "m4a", "flac", "ogg", "opus"] },
-  video: { main: ["mp4", "webm", "mov", "mkv"], audio: ["mp3", "wav", "m4a"] },
+  audio: { main: ["mp3", "wav", "m4a", "flac", "ogg", "opus"], text: ["srt", "txt"] },
+  video: {
+    main: ["mp4", "webm", "mov", "mkv"],
+    audio: ["mp3", "wav", "m4a"],
+    text: ["srt", "txt"]
+  },
   image: { main: ["png", "jpg", "webp", "bmp", "tiff"] }
 };
+
+export const TEXT_TARGETS = ["srt", "txt"];
 
 export const URL_TARGETS = ["mp4", "mp3", "m4a", "wav", "flac"];
 

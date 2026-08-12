@@ -198,12 +198,134 @@ def health_check(request: Request):
     }
 
 
+async def save_upload(file: UploadFile, temp_dir: str) -> tuple[str, str]:
+    """Stream an upload to disk under the size cap. Returns (name, path).
+
+    Copying in chunks with a running total keeps an unbounded upload from
+    being a way to fill the disk of whoever is running the studio.
+    """
+    # Never trust the client filename — strip any path components (traversal).
+    safe_in = os.path.basename(file.filename or "upload")
+    input_path = os.path.join(temp_dir, safe_in)
+    written = 0
+    with open(input_path, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            written += len(chunk)
+            if written > MAX_UPLOAD_BYTES:
+                f.close()
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File is larger than the {round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB limit "
+                           f"(raise TRANSCRIPE_MAX_UPLOAD_MB to allow more).",
+                )
+            f.write(chunk)
+    return safe_in, input_path
+
+
 def _token_ok(request: Request) -> bool:
     try:
         require_token(request)
         return True
     except HTTPException:
         return False
+
+
+# --- Transcription jobs ---------------------------------------------------
+# Whisper takes minutes, not milliseconds, and the first run may download a
+# multi-gigabyte model, so this can't ride on a single request. Start a job,
+# poll it, collect the file through the same one-shot handoff as everything else.
+JOB_TTL_SECONDS = 3600
+_jobs: dict = {}
+_jobs_lock = threading.Lock()
+
+
+def _job_update(job_id: str, **fields) -> None:
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is not None:
+            job.update(fields, touched=time.time())
+
+
+def _reap_jobs() -> None:
+    cutoff = time.time() - JOB_TTL_SECONDS
+    with _jobs_lock:
+        for job_id in [j for j, r in _jobs.items() if r.get("touched", 0) < cutoff]:
+            _jobs.pop(job_id, None)
+
+
+def _run_transcribe(job_id: str, input_path: str, temp_dir: str, fmt: str, translate: bool) -> None:
+    import io
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from transcripe.engines.audio_video import MODEL_SIZE, transcribe
+
+    try:
+        _job_update(job_id, status="running",
+                    stage=f"loading Whisper ({MODEL_SIZE}) — the first run downloads it")
+        src = Path(input_path)
+        out_path = src.with_suffix(f".{fmt}")
+        # The engine narrates to a Rich console; give it one that goes nowhere.
+        transcribe(src, fmt, Console(file=io.StringIO()), output_path=out_path,
+                   translate=translate)
+        if not out_path.exists():
+            raise RuntimeError("Whisper produced no output")
+        _job_update(job_id, status="done", stage="", **stash_result(
+            str(out_path), temp_dir, out_path.name))
+    except Exception as e:  # surfaced verbatim to the client
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        detail = str(e) or e.__class__.__name__
+        if "faster_whisper" in detail or isinstance(e, ImportError):
+            detail = ("Transcription needs Whisper — "
+                      "pip install 'transcripe[whisper]'")
+        _job_update(job_id, status="error", stage="", detail=detail[:300])
+
+
+@app.post("/api/transcribe")
+async def start_transcribe(
+    request: Request,
+    file: UploadFile = File(...),
+    targetFormat: str = Form("srt"),
+    translate: bool = Form(False),
+):
+    """Kick off a transcription and hand back a job id to poll."""
+    require_token(request)
+    fmt = "srt" if targetFormat.lower().strip().lstrip(".") == "srt" else "txt"
+
+    try:
+        import faster_whisper  # noqa: F401
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="Transcription needs Whisper — pip install 'transcripe[whisper]'")
+
+    temp_dir = tempfile.mkdtemp(prefix="transcripe_stt_")
+    _, input_path = await save_upload(file, temp_dir)
+
+    _reap_jobs()
+    job_id = secrets.token_urlsafe(12)
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "queued", "stage": "queued", "touched": time.time()}
+    threading.Thread(
+        target=_run_transcribe,
+        args=(job_id, input_path, temp_dir, fmt, translate),
+        daemon=True,
+    ).start()
+
+    from transcripe.engines.audio_video import MODEL_SIZE
+    return {"job": job_id, "model": MODEL_SIZE}
+
+
+@app.get("/api/jobs/{job_id}")
+def job_status(job_id: str, request: Request):
+    require_token(request)
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="No such job (it may have expired)")
+    return {k: v for k, v in job.items() if k != "touched"}
 
 
 @app.post("/api/convert/url")
@@ -337,25 +459,7 @@ async def convert_file(
     require_token(request)
     target_fmt = re.sub(r"[^\w]", "", targetFormat.lower()) or "txt"
     temp_dir = tempfile.mkdtemp(prefix="transcripe_file_")
-
-    # Never trust the client filename — strip any path components (path-traversal).
-    safe_in = os.path.basename(file.filename or "upload")
-    input_path = os.path.join(temp_dir, safe_in)
-    # Copy in chunks with a running total: an unbounded upload would otherwise
-    # be a way to fill the disk of whoever is running the studio.
-    written = 0
-    with open(input_path, "wb") as f:
-        while chunk := await file.read(1024 * 1024):
-            written += len(chunk)
-            if written > MAX_UPLOAD_BYTES:
-                f.close()
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File is larger than the {round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB limit "
-                           f"(raise TRANSCRIPE_MAX_UPLOAD_MB to allow more).",
-                )
-            f.write(chunk)
+    safe_in, input_path = await save_upload(file, temp_dir)
 
     base_name = os.path.splitext(safe_in)[0] or "output"
     output_filename = f"{base_name}_converted.{target_fmt}"

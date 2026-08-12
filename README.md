@@ -250,7 +250,8 @@ transcripe studio                                  # http://localhost:8000/trans
 
 One process, one command: it serves the built UI *and* the conversion API, and
 opens your browser. Drop a file anywhere on the page, or paste a link anywhere,
-and it converts locally. Chrome and Edge offer to install it as a desktop app.
+and it converts locally — including Whisper transcription to `.srt`/`.txt`,
+which runs as a background job you can watch (and cancel). Chrome and Edge offer to install it as a desktop app.
 From a git checkout, `python server.py` does the same thing. Without a built
 UI the API still runs — the studio says so instead of failing.
 
