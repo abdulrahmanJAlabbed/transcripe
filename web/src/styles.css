@@ -133,13 +133,15 @@ a {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-height: 100svh;
 }
 
 .shell {
   width: 100%;
   max-width: 1080px;
   margin: 0 auto;
-  padding: 0 28px;
+  padding-left: max(28px, env(safe-area-inset-left));
+  padding-right: max(28px, env(safe-area-inset-right));
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
@@ -998,10 +1000,21 @@ a {
   padding: 22px;
   background: var(--card);
   transition: background 0.25s ease;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
 }
 
 .engine-cell:hover {
   background: #fbf7ef;
+}
+
+.engine-cell:focus-visible {
+  outline-offset: -2px;
+}
+
+.io-copied {
+  color: var(--ok);
 }
 
 .engine-top {
@@ -1186,6 +1199,182 @@ a {
   color: var(--ink);
 }
 
+/* ── App layer: status, veil, toast, offline ─────────────────────────────── */
+
+.engine-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  user-select: none;
+}
+
+.engine-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.engine-status.on i {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(44, 110, 73, 0.14);
+}
+
+.engine-status.off i {
+  background: var(--err);
+  box-shadow: 0 0 0 3px var(--err-soft);
+}
+
+.offline-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--well);
+  font-size: 0.8rem;
+  color: var(--ink-2);
+  animation: panel-in 0.25s var(--ease-out);
+}
+
+.offline-chip span {
+  flex: 1;
+  line-height: 1.45;
+}
+
+.offline-chip code {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.offline-chip button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--ink-3);
+  transition: color 0.18s ease, background 0.18s ease;
+}
+
+.offline-chip button:hover {
+  color: var(--ink);
+  background: var(--card);
+}
+
+.drop-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(250, 249, 246, 0.86);
+  backdrop-filter: blur(5px);
+  pointer-events: none;
+  animation: veil-in 0.18s ease-out;
+}
+
+@keyframes veil-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.veil-frame {
+  border: 2px dashed var(--clay);
+  border-radius: 24px;
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  padding: 46px 70px;
+  text-align: center;
+  animation: veil-pop 0.22s var(--ease-out);
+}
+
+@keyframes veil-pop {
+  from {
+    transform: scale(0.96);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.veil-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.7rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.veil-sub {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(26px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 70;
+  background: var(--ink);
+  color: #f2efe6;
+  font-size: 0.83rem;
+  font-weight: 500;
+  padding: 10px 18px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-pop);
+  animation: toast-in 0.3s var(--ease-out);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+/* Comfortable touch targets on coarse pointers */
+@media (pointer: coarse) {
+  .chip {
+    padding: 10px 16px;
+  }
+  .row-x,
+  .cmd-copy {
+    width: 34px;
+    height: 34px;
+  }
+  .seg button {
+    padding: 12px 0;
+  }
+  .nav-link {
+    padding: 6px 2px;
+  }
+}
+
 /* ── Load reveal ─────────────────────────────────────────────────────────── */
 
 .reveal {
@@ -1248,6 +1437,11 @@ a {
   }
   .pip-chip {
     display: none;
+  }
+  /* dot only — the label is noise at this size */
+  .engine-status {
+    font-size: 0;
+    gap: 0;
   }
   .card {
     padding: 16px;

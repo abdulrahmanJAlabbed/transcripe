@@ -138,11 +138,20 @@ type OutFile = { name: string; url: string };
 type Phase = "idle" | "working" | "done";
 type Mode = "file" | "url";
 
+/* Engines the web studio can run directly — clicking their grid cell arms
+   the converter; every other cell copies its CLI one-liner instead. */
+const WEB_ABLE: Record<string, Mode> = {
+  "social-downloader": "url",
+  "media-convert": "file",
+  "image-resize-compress": "file"
+};
+
 /* ── App ─────────────────────────────────────────────────────────────────── */
 
 export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   const [mode, setMode] = useState<Mode>("file");
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -157,9 +166,21 @@ export function App() {
   const [outputs, setOutputs] = useState<OutFile[]>([]);
 
   const [isDragging, setIsDragging] = useState(false);
+  const [globalDrag, setGlobalDrag] = useState(false);
+  const [engineOnline, setEngineOnline] = useState<boolean | null>(null);
+  const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
+  const [copiedEngine, setCopiedEngine] = useState<string | null>(null);
   const [pipCopied, copyPip] = useCopy();
   const [termCopied, copyTerm] = useCopy();
   const [cmdCopied, copyCmd] = useCopy();
+  const [offlineCopied, copyOffline] = useCopy();
+
+  const toastTimer = useRef(0);
+  const showToast = (msg: string) => {
+    setToast({ id: Date.now(), msg });
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
+  };
 
   const platform = useMemo(() => detectPlatform(mediaUrl), [mediaUrl]);
 
@@ -177,6 +198,27 @@ export function App() {
     const t = window.setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => window.clearInterval(t);
   }, [phase]);
+
+  /* Local engine heartbeat. */
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const res = await fetch("/api/health", {
+          signal: AbortSignal.timeout(2500)
+        });
+        if (alive) setEngineOnline(res.ok);
+      } catch {
+        if (alive) setEngineOnline(false);
+      }
+    };
+    check();
+    const t = window.setInterval(check, 15000);
+    return () => {
+      alive = false;
+      window.clearInterval(t);
+    };
+  }, []);
 
   /* Release result blobs when they're replaced. */
   useEffect(
@@ -260,6 +302,71 @@ export function App() {
       );
     }
   };
+
+  /* Latest handlers behind stable refs so window listeners bind once. */
+  const addFilesRef = useRef(addFiles);
+  addFilesRef.current = addFiles;
+
+  /* Drop anywhere on the page — not just the little box. */
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: globalThis.DragEvent) =>
+      e.dataTransfer?.types.includes("Files");
+    const onEnter = (e: globalThis.DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth++;
+      setGlobalDrag(true);
+    };
+    const onLeave = (e: globalThis.DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setGlobalDrag(false);
+    };
+    const onOver = (e: globalThis.DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const onDrop = (e: globalThis.DragEvent) => {
+      depth = 0;
+      setGlobalDrag(false);
+      if (!e.dataTransfer?.files.length) return;
+      e.preventDefault();
+      setMode("file");
+      addFilesRef.current(e.dataTransfer.files);
+    };
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
+
+  /* Paste anywhere: files convert, links arm the URL mode. */
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target?.closest("input, textarea")) return;
+      const files = e.clipboardData?.files;
+      if (files?.length) {
+        setMode("file");
+        addFilesRef.current(files);
+        return;
+      }
+      const text = e.clipboardData?.getData("text") ?? "";
+      const match = text.match(/https?:\/\/\S+/i);
+      if (match) {
+        setMode("url");
+        setTarget((t) => (URL_TARGETS.includes(t) ? t : "mp4"));
+        setMediaUrl(match[0]);
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, []);
 
   /* ── Conversion ──────────────────────────────────────────────────────── */
 
@@ -347,6 +454,51 @@ export function App() {
       ? mediaUrl.trim().length > 0
       : entries.length > 0 && kind !== "other" && !!target);
 
+  /* Keyboard: Enter converts, Esc cancels. */
+  const keyGateRef = useRef({ convert, canConvert, phase });
+  keyGateRef.current = { convert, canConvert, phase };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const gate = keyGateRef.current;
+      if (e.key === "Escape" && gate.phase === "working") {
+        abortRef.current?.abort();
+        return;
+      }
+      if (e.key !== "Enter" || e.repeat) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el?.closest("button, a, input, textarea, select")) return;
+      if (gate.canConvert && gate.phase !== "done") {
+        gate.convert();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  /* Engine grid: web-able cells arm the studio, the rest copy their CLI. */
+  const engineCopyTimer = useRef(0);
+  const onEngineClick = (s: Service) => {
+    const webMode = WEB_ABLE[s.id];
+    if (webMode) {
+      switchMode(webMode);
+      cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      showToast(
+        webMode === "url"
+          ? "Studio armed — paste your link"
+          : "Studio armed — drop your file"
+      );
+      return;
+    }
+    navigator.clipboard?.writeText(s.command).then(() => {
+      setCopiedEngine(s.id);
+      window.clearTimeout(engineCopyTimer.current);
+      engineCopyTimer.current = window.setTimeout(
+        () => setCopiedEngine(null),
+        2200
+      );
+    });
+  };
+
   const minutes = Math.floor(elapsed / 60);
   const seconds = String(elapsed % 60).padStart(2, "0");
 
@@ -409,11 +561,39 @@ export function App() {
     <div className="page">
       <CleanHeroBackground />
 
+      {globalDrag && (
+        <div className="drop-veil" aria-hidden="true">
+          <div className="veil-frame">
+            <div className="veil-title">Drop it anywhere</div>
+            <div className="veil-sub">audio · video · images</div>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className="toast" key={toast.id} role="status">
+          {toast.msg}
+        </div>
+      )}
+
       <header className="site-head shell reveal d0">
         <a className="wordmark" href="#top">
           Transcripe<span className="dot">.</span>
         </a>
         <nav className="site-nav">
+          {engineOnline !== null && (
+            <span
+              className={`engine-status ${engineOnline ? "on" : "off"}`}
+              title={
+                engineOnline
+                  ? "Local engine is running"
+                  : "Local engine is offline"
+              }
+            >
+              <i />
+              engine {engineOnline ? "on" : "off"}
+            </span>
+          )}
           <a className="nav-link" href="#engines">
             Engines
           </a>
@@ -445,7 +625,7 @@ export function App() {
             sixteen engines that run on your machine and answer to no cloud.
           </p>
 
-          <div className="card reveal d4">
+          <div className="card reveal d4" ref={cardRef}>
             <div className="seg" data-mode={mode} role="tablist">
               <span className="seg-thumb" aria-hidden="true" />
               <button
@@ -570,6 +750,9 @@ export function App() {
                       setMediaUrl(e.target.value);
                       if (phase === "done") resetResult();
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && canConvert) convert();
+                    }}
                   />
                   <button className="paste-btn" onClick={pasteFromClipboard}>
                     <Clipboard size={13} /> Paste
@@ -599,6 +782,21 @@ export function App() {
                     </label>
                   </>
                 )}
+              </div>
+            )}
+
+            {engineOnline === false && (
+              <div className="offline-chip" role="status">
+                <span>
+                  Local engine is offline — start it with{" "}
+                  <code>python server.py</code>
+                </span>
+                <button
+                  onClick={() => copyOffline("python server.py")}
+                  aria-label="Copy start command"
+                >
+                  {offlineCopied ? <Check size={13} /> : <Copy size={13} />}
+                </button>
               </div>
             )}
 
@@ -697,8 +895,18 @@ export function App() {
           <div className="engine-grid">
             {services.map((s) => {
               const Icon = s.icon;
+              const webMode = WEB_ABLE[s.id];
               return (
-                <div className="engine-cell" key={s.id}>
+                <button
+                  className="engine-cell"
+                  key={s.id}
+                  onClick={() => onEngineClick(s)}
+                  title={
+                    webMode
+                      ? "Open in the studio above"
+                      : "Click to copy the CLI command"
+                  }
+                >
                   <div className="engine-top">
                     <Icon size={17} strokeWidth={1.8} />
                     <span className="engine-cat">{s.category}</span>
@@ -706,13 +914,23 @@ export function App() {
                   <div className="engine-title">{s.title}</div>
                   <p className="engine-sum">{s.summary}</p>
                   <div className="engine-io">
-                    {s.inputs.slice(0, 3).join(" ")}
-                    {s.inputs.length > 3 ? ` +${s.inputs.length - 3}` : ""}
-                    <span className="io-arrow">→</span>
-                    {s.outputs.slice(0, 3).join(" ")}
-                    {s.outputs.length > 3 ? ` +${s.outputs.length - 3}` : ""}
+                    {copiedEngine === s.id ? (
+                      <span className="io-copied">
+                        ✓ copied — paste in a terminal
+                      </span>
+                    ) : (
+                      <>
+                        {s.inputs.slice(0, 3).join(" ")}
+                        {s.inputs.length > 3 ? ` +${s.inputs.length - 3}` : ""}
+                        <span className="io-arrow">→</span>
+                        {s.outputs.slice(0, 3).join(" ")}
+                        {s.outputs.length > 3
+                          ? ` +${s.outputs.length - 3}`
+                          : ""}
+                      </>
+                    )}
                   </div>
-                </div>
+                </button>
               );
             })}
             <a
