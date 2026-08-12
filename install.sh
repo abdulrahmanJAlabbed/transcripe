@@ -36,31 +36,43 @@ install_system_deps() {
 install_system_deps
 
 # ── 1. Ensure virtual environment exists ────────────────────────────────────
-if [ ! -d "$PROJECT_DIR/venv" ]; then
+# Adopt an existing .venv rather than creating a second environment beside it.
+if [ -d "$PROJECT_DIR/.venv" ]; then
+    VENV="$PROJECT_DIR/.venv"
+elif [ -d "$PROJECT_DIR/venv" ]; then
+    VENV="$PROJECT_DIR/venv"
+else
     echo "📦 Creating virtual environment..."
-    python3 -m venv "$PROJECT_DIR/venv"
+    python3 -m venv "$PROJECT_DIR/.venv"
+    VENV="$PROJECT_DIR/.venv"
 fi
 
 # ── 2. Install Python requirements ──────────────────────────────────────────
 echo "📥 Installing Python dependencies (this might take a minute)..."
-"$PROJECT_DIR/venv/bin/pip" install -q --upgrade pip
-"$PROJECT_DIR/venv/bin/pip" install -q -r "$PROJECT_DIR/requirements.txt"
-"$PROJECT_DIR/venv/bin/pip" install -q -e "$PROJECT_DIR"
+"$VENV/bin/pip" install -q --upgrade pip
+"$VENV/bin/pip" install -q -r "$PROJECT_DIR/requirements.txt"
+"$VENV/bin/pip" install -q -e "$PROJECT_DIR"
 
 # ── 3. Create the executable wrapper in ~/.local/bin ────────────────────────
 mkdir -p "$HOME/.local/bin"
 BIN_PATH="$HOME/.local/bin/transcripe"
 
 # Unquoted heredoc expands $PROJECT_DIR now; \$@ stays literal (portable, no sed).
-# The console script comes from the editable install (src layout).
+# The console script comes from the editable install (src layout). The wrapper
+# re-resolves the venv at run time so renaming venv → .venv can't strand it.
 cat > "$BIN_PATH" <<EOF
 #!/bin/bash
-exec "$PROJECT_DIR/venv/bin/transcripe" "\$@"
+for v in "$PROJECT_DIR/.venv" "$PROJECT_DIR/venv"; do
+    [ -x "\$v/bin/transcripe" ] && exec "\$v/bin/transcripe" "\$@"
+done
+echo "transcripe: no virtualenv found in $PROJECT_DIR — re-run install.sh" >&2
+exit 1
 EOF
 chmod +x "$BIN_PATH"
 
 echo ""
 echo "✅ Installation complete!"
 echo "🎉 Run it from anywhere by typing: transcripe"
+echo "   Browser + phone studio:  transcripe studio"
 echo "   If 'transcripe' is not found, add ~/.local/bin to your PATH:"
 echo "     export PATH=\"\$HOME/.local/bin:\$PATH\""
