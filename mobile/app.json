@@ -31,8 +31,7 @@
         "backgroundColor": "#c8502a"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false,
-      "usesCleartextTraffic": true
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -43,6 +42,14 @@
         "expo-image-picker",
         {
           "photosPermission": "Transcripe reads the videos and photos you pick so your local engine can convert them."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
         }
       ]
     ]
