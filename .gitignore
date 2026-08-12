@@ -25,6 +25,10 @@ transcripe_test_output/
 src/transcripe/engines/js/node_modules/
 src/transcripe/engines/js/package-lock.json
 
+# Web frontend
+web/node_modules/
+web/dist/
+
 # OS
 Thumbs.db
 desktop.ini
