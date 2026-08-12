@@ -24,7 +24,7 @@ import { api, setToken } from "./token";
 
 const AUDIO_EXTS = ["mp3", "wav", "m4a", "flac", "aac", "ogg", "opus", "wma"];
 const VIDEO_EXTS = ["mp4", "mkv", "mov", "webm", "avi", "3gp", "flv", "wmv"];
-const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"];
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "heic", "heif", "avif"];
 
 type Kind = "audio" | "video" | "image" | "other";
 
@@ -269,6 +269,14 @@ export function App() {
     });
     resetResult();
   };
+
+  /* One target applies to the whole batch, so files of a different kind than
+     the first would fail one by one. Say it up front instead. */
+  const strays = useMemo(() => {
+    if (entries.length < 2) return [];
+    const lead = kindOf(entries[0].ext);
+    return entries.filter((e) => kindOf(e.ext) !== lead);
+  }, [entries]);
 
   const onFileInput = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.length) addFiles(e.target.files);
@@ -774,6 +782,18 @@ export function App() {
                     >
                       <Plus size={14} /> Add more files
                     </button>
+
+                    {strays.length > 0 && (
+                      <div className="offline-chip" role="status">
+                        <span>
+                          {strays.length === 1
+                            ? `${strays[0].file.name} isn't the same kind of file as the rest`
+                            : `${strays.length} files aren't the same kind as the rest`}{" "}
+                          — one target applies to the whole batch, so convert
+                          them separately.
+                        </span>
+                      </div>
+                    )}
 
                     {cliService ? (
                       <div className="cli-hint">

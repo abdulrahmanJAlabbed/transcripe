@@ -15,9 +15,16 @@ def _pil():
             "Image operations need Pillow — pip install 'transcripe[images]'") from e
     if not _HEIF_REGISTERED:
         _HEIF_REGISTERED = True
+        # Register each opener on its own: pillow-heif ≥ 1.0 dropped
+        # register_avif_opener (Pillow reads AVIF natively now), and importing
+        # both together used to take HEIC support down with it.
         try:
-            from pillow_heif import register_heif_opener, register_avif_opener
+            from pillow_heif import register_heif_opener
             register_heif_opener()
+        except ImportError:
+            pass
+        try:
+            from pillow_heif import register_avif_opener
             register_avif_opener()
         except ImportError:
             pass

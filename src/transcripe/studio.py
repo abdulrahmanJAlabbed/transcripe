@@ -493,9 +493,30 @@ async def convert_file(
                      "-pix_fmt", "yuv420p", "-codec:a", "libopus"]
         return base + [output_path]
 
+    IMAGE_FMTS = {"png", "jpg", "jpeg", "webp", "bmp", "tiff", "gif", "ico"}
+    src_ext = os.path.splitext(safe_in)[1].lower().lstrip(".")
+
     try:
-        cmd = build_cmd(target_fmt)
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        # Images go through Pillow, not ffmpeg: ffmpeg can't read HEIC/AVIF at
+        # all, and those are exactly what phones hand over.
+        if target_fmt in IMAGE_FMTS or src_ext in IMAGE_FMTS | {"heic", "heif", "avif"}:
+            if target_fmt not in IMAGE_FMTS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Can't turn an image into .{target_fmt}.")
+            import io
+            from pathlib import Path
+
+            from rich.console import Console
+
+            from transcripe.engines.images import convert_image
+
+            convert_image(Path(input_path), target_fmt, Console(file=io.StringIO()),
+                          output_path=Path(output_path))
+            res = None
+        else:
+            cmd = build_cmd(target_fmt)
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             if deliver == "link":
@@ -508,7 +529,7 @@ async def convert_file(
             )
         # Honest failure — do NOT fabricate a stub file that pretends success.
         shutil.rmtree(temp_dir, ignore_errors=True)
-        err = re.sub(r"\s+", " ", res.stderr or "").strip()[:200]
+        err = re.sub(r"\s+", " ", (res.stderr if res else "") or "").strip()[:200]
         raise HTTPException(
             status_code=422,
             detail=f"Could not convert to .{target_fmt}. {err or 'Unsupported format for this input.'}")
