@@ -194,6 +194,58 @@ def test_unknown_job_is_not_found(open_studio):
         assert client.get("/api/jobs/made-up-job").status_code == 404
 
 
+def test_empty_upload_is_named_plainly(open_studio):
+    with TestClient(open_studio.app) as client:
+        res = client.post(
+            "/api/convert/file",
+            files={"file": ("silence.wav", b"", "audio/wav")},
+            data={"targetFormat": "mp3"},
+        )
+    assert res.status_code == 422
+    assert "empty" in res.json()["detail"]
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_failure_reports_the_reason_not_the_ffmpeg_banner(open_studio):
+    """The old slice showed users 200 characters of build configuration."""
+    with TestClient(open_studio.app) as client:
+        res = client.post(
+            "/api/convert/file",
+            files={"file": ("fake.wav", b"this is not audio", "audio/wav")},
+            data={"targetFormat": "mp3"},
+        )
+    assert res.status_code == 422
+    detail = res.json()["detail"]
+    assert "ffmpeg version" not in detail
+    assert "configuration:" not in detail
+    assert "Invalid data" in detail or "Error" in detail
+
+
+def test_ffmpeg_reason_picks_the_error_line(open_studio):
+    stderr = (
+        "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers\n"
+        "  built with gcc 13 (Ubuntu 13.2.0)\n"
+        "  configuration: --prefix=/usr --extra-version=3ubuntu5 --toolchain=hardened\n"
+        "  libavutil      58. 29.100 / 58. 29.100\n"
+        "[in#0] Error opening input: Invalid data found when processing input\n"
+    )
+    assert open_studio.ffmpeg_reason(stderr) == (
+        "[in#0] Error opening input: Invalid data found when processing input")
+
+
+def test_absurdly_long_filenames_are_trimmed(open_studio):
+    """255 bytes is the usual filesystem limit, and we append to the name."""
+    with TestClient(open_studio.app) as client:
+        res = client.post(
+            "/api/convert/file",
+            files={"file": ("x" * 300 + ".wav", b"", "audio/wav")},
+            data={"targetFormat": "mp3"},
+        )
+    # It reaches the emptiness check, which means the write itself succeeded.
+    assert res.status_code == 422
+    assert "empty" in res.json()["detail"]
+
+
 # ── download selection ──────────────────────────────────────────────────────
 
 def test_download_pick_ignores_sidecars(open_studio, tmp_path):

@@ -60,6 +60,12 @@ def fmt_time(s: float) -> str:
 def transcribe(video: Path, target_format: str, console: Console, output_path: Path | None = None,
                translate: bool = False):
     """Transcribe (or translate to English, translate=True) audio/video to txt/srt."""
+    # Anything else would run the whole model and then write an empty file,
+    # since only these two have a writer below.
+    if target_format not in ("txt", "srt"):
+        raise ValueError(
+            f"Transcription writes .txt or .srt, not .{target_format} "
+            "(convert the .srt afterwards for other subtitle formats)")
     txt_path = output_path or video.with_suffix(f".{target_format}")
     txt_path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -247,6 +247,27 @@ def health_check(request: Request):
     }
 
 
+def ffmpeg_reason(stderr: str) -> str:
+    """The line that actually explains the failure.
+
+    ffmpeg opens with a version banner and its whole build configuration, so
+    taking the first 200 characters showed users a wall of compile flags and
+    cut off the real message, which comes last.
+    """
+    noise = ("ffmpeg version", "built with", "configuration:", "lib", "  ")
+    lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
+    meaningful = [
+        ln for ln in lines
+        if not ln.startswith(noise) and not re.match(r"^\s*(Input|Output) #", ln)
+    ]
+    for line in reversed(meaningful):
+        if any(word in line.lower() for word in
+               ("error", "invalid", "unable", "no such", "not found",
+                "unsupported", "does not", "failed", "denied")):
+            return line[:180]
+    return meaningful[-1][:180] if meaningful else ""
+
+
 async def save_upload(file: UploadFile, temp_dir: str) -> tuple[str, str]:
     """Stream an upload to disk under the size cap. Returns (name, path).
 
@@ -255,6 +276,11 @@ async def save_upload(file: UploadFile, temp_dir: str) -> tuple[str, str]:
     """
     # Never trust the client filename — strip any path components (traversal).
     safe_in = os.path.basename(file.filename or "upload")
+    # Keep room for the "_converted.<ext>" suffix inside the 255-byte limit
+    # most filesystems enforce, so a long name can't fail the write itself.
+    stem, dot_ext = os.path.splitext(safe_in)
+    if len(safe_in) > 120:
+        safe_in = stem[:100] + dot_ext[:20]
     input_path = os.path.join(temp_dir, safe_in)
     written = 0
     with open(input_path, "wb") as f:
@@ -269,6 +295,9 @@ async def save_upload(file: UploadFile, temp_dir: str) -> tuple[str, str]:
                            f"(raise TRANSCRIPE_MAX_UPLOAD_MB to allow more).",
                 )
             f.write(chunk)
+    if written == 0:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=f"{safe_in} is empty — nothing to convert.")
     return safe_in, input_path
 
 
@@ -306,8 +335,28 @@ def _reap_jobs() -> None:
             _jobs.pop(job_id, None)
 
 
+def _reap_orphan_temp_dirs() -> None:
+    """Delete our own temp directories that nothing is waiting on.
+
+    A client that disconnects mid-conversion leaves the response — and its
+    cleanup task — unsent, so the directory would otherwise sit there until
+    the machine reboots.
+    """
+    with _results_lock:
+        live = {entry["dir"] for entry in _results.values()}
+    cutoff = time.time() - max(3600, JOB_TIMEOUT * 2)
+    for path in glob.glob(os.path.join(tempfile.gettempdir(), "transcripe_*")):
+        if path in live or not os.path.isdir(path):
+            continue
+        try:
+            if os.path.getmtime(path) < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+
 def _sweeper() -> None:
-    """Expire abandoned results and job records on a timer.
+    """Expire abandoned results, job records, and stranded temp dirs on a timer.
 
     Reaping only when new work arrives meant a result nobody collected kept its
     temp directory for as long as the studio stayed idle.
@@ -317,6 +366,7 @@ def _sweeper() -> None:
         try:
             _reap_results()
             _reap_jobs()
+            _reap_orphan_temp_dirs()
         except Exception:
             pass
 
@@ -613,10 +663,11 @@ async def convert_file(
             )
         # Honest failure — do NOT fabricate a stub file that pretends success.
         shutil.rmtree(temp_dir, ignore_errors=True)
-        err = re.sub(r"\s+", " ", (res.stderr if res else "") or "").strip()[:200]
+        err = ffmpeg_reason(res.stderr if res else "")
         raise HTTPException(
             status_code=422,
-            detail=f"Could not convert to .{target_fmt}. {err or 'Unsupported format for this input.'}")
+            detail=f"Could not convert {safe_in} to .{target_fmt}. "
+                   f"{err or 'That combination of formats is not supported.'}")
     except HTTPException:
         raise
     except subprocess.TimeoutExpired:
