@@ -194,6 +194,30 @@ def test_unknown_job_is_not_found(open_studio):
         assert client.get("/api/jobs/made-up-job").status_code == 404
 
 
+# ── download selection ──────────────────────────────────────────────────────
+
+def test_download_pick_ignores_sidecars(open_studio, tmp_path):
+    """yt-dlp drops thumbnails and .part files next to the media; taking the
+    first glob hit could hand the user a JPEG instead of their video."""
+    (tmp_path / "video.mp4").write_bytes(b"m" * 5000)
+    (tmp_path / "video.jpg").write_bytes(b"t" * 9000)      # bigger, but a thumbnail
+    (tmp_path / "video.info.json").write_text("{}")
+    (tmp_path / "video.mp4.part").write_bytes(b"p" * 8000)
+
+    assert open_studio.pick_download(str(tmp_path)).endswith("video.mp4")
+
+
+def test_download_pick_prefers_the_largest_real_file(open_studio, tmp_path):
+    (tmp_path / "audio.m4a").write_bytes(b"a" * 100)
+    (tmp_path / "video.mp4").write_bytes(b"v" * 9000)
+    assert open_studio.pick_download(str(tmp_path)).endswith("video.mp4")
+
+
+def test_download_pick_returns_empty_when_nothing_landed(open_studio, tmp_path):
+    (tmp_path / "only.part").write_bytes(b"x" * 10)
+    assert open_studio.pick_download(str(tmp_path)) == ""
+
+
 # ── cookie opt-out ──────────────────────────────────────────────────────────
 
 def test_browser_cookies_are_not_read_when_declined(open_studio, monkeypatch):

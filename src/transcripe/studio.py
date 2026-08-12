@@ -71,6 +71,30 @@ app.add_middleware(
 AUTH_TOKEN = os.environ.get("TRANSCRIPE_TOKEN", "").strip()
 MAX_UPLOAD_BYTES = int(float(os.environ.get("TRANSCRIPE_MAX_UPLOAD_MB", "2048")) * 1024 * 1024)
 
+# ffmpeg and yt-dlp are slow by nature: a two-hour recording is a normal input,
+# so the old flat two minutes turned ordinary work into a 504.
+JOB_TIMEOUT = int(os.environ.get("TRANSCRIPE_TIMEOUT", "1800"))
+
+# Heavy work runs in worker threads (see run_blocking) so the event loop stays
+# free to answer heartbeats. This bounds how many run at once: ffmpeg already
+# uses every core, so piling jobs on only makes them all slower.
+MAX_PARALLEL_JOBS = max(1, int(os.environ.get(
+    "TRANSCRIPE_PARALLEL", str(max(2, (os.cpu_count() or 4) // 2)))))
+_work_slots = threading.BoundedSemaphore(MAX_PARALLEL_JOBS)
+
+
+async def run_blocking(fn, *args, **kwargs):
+    """Run blocking work in a thread, one of MAX_PARALLEL_JOBS at a time."""
+    import asyncio
+    import functools
+
+    def guarded():
+        with _work_slots:
+            return fn(*args, **kwargs)
+
+    return await asyncio.get_running_loop().run_in_executor(
+        None, functools.partial(guarded))
+
 
 def require_token(request: Request) -> None:
     """Gate an endpoint on the shared token, when one is configured."""
@@ -155,6 +179,31 @@ def fetch_result(token: str, request: Request):
 def get_rotated_user_agent() -> str:
     return random.choice(USER_AGENTS)
 
+
+# Files yt-dlp leaves beside the media: thumbnails, metadata, partial fragments.
+SIDECAR_EXTS = {".part", ".ytdl", ".json", ".info", ".description", ".annotations",
+                ".jpg", ".jpeg", ".png", ".webp", ".lrc", ".txt", ".temp"}
+
+
+def pick_download(temp_dir: str) -> str:
+    """The media file among whatever the downloader dropped in the directory.
+
+    Sorting by size beats taking the first name back from glob: a thumbnail or
+    a leftover .part would otherwise get handed to the user as their video.
+    """
+    candidates = []
+    for path in glob.glob(os.path.join(temp_dir, "*")):
+        if not os.path.isfile(path):
+            continue
+        if os.path.splitext(path)[1].lower() in SIDECAR_EXTS:
+            continue
+        size = os.path.getsize(path)
+        if size > 0:
+            candidates.append((size, path))
+    if not candidates:
+        return ""
+    return max(candidates)[1]
+
 def tool_path(name: str) -> str:
     """Resolve a helper binary: our own interpreter's dir, project venv, PATH."""
     own_bin = os.path.join(os.path.dirname(sys.executable), name)
@@ -238,6 +287,9 @@ def _token_ok(request: Request) -> bool:
 JOB_TTL_SECONDS = 3600
 _jobs: dict = {}
 _jobs_lock = threading.Lock()
+# One Whisper model instance is shared and cached across jobs; running two
+# transcriptions through it at once is not safe, so they queue.
+_whisper_lock = threading.Lock()
 
 
 def _job_update(job_id: str, **fields) -> None:
@@ -254,6 +306,24 @@ def _reap_jobs() -> None:
             _jobs.pop(job_id, None)
 
 
+def _sweeper() -> None:
+    """Expire abandoned results and job records on a timer.
+
+    Reaping only when new work arrives meant a result nobody collected kept its
+    temp directory for as long as the studio stayed idle.
+    """
+    while True:
+        time.sleep(300)
+        try:
+            _reap_results()
+            _reap_jobs()
+        except Exception:
+            pass
+
+
+threading.Thread(target=_sweeper, daemon=True, name="transcripe-sweeper").start()
+
+
 def _run_transcribe(job_id: str, input_path: str, temp_dir: str, fmt: str, translate: bool) -> None:
     import io
     from pathlib import Path
@@ -263,13 +333,19 @@ def _run_transcribe(job_id: str, input_path: str, temp_dir: str, fmt: str, trans
     from transcripe.engines.audio_video import MODEL_SIZE, transcribe
 
     try:
-        _job_update(job_id, status="running",
-                    stage=f"loading Whisper ({MODEL_SIZE}) — the first run downloads it")
-        src = Path(input_path)
-        out_path = src.with_suffix(f".{fmt}")
-        # The engine narrates to a Rich console; give it one that goes nowhere.
-        transcribe(src, fmt, Console(file=io.StringIO()), output_path=out_path,
-                   translate=translate)
+        if not _whisper_lock.acquire(blocking=False):
+            _job_update(job_id, status="running", stage="waiting for the transcriber")
+            _whisper_lock.acquire()
+        try:
+            _job_update(job_id, status="running",
+                        stage=f"loading Whisper ({MODEL_SIZE}) — the first run downloads it")
+            src = Path(input_path)
+            out_path = src.with_suffix(f".{fmt}")
+            # The engine narrates to a Rich console; give it one that goes nowhere.
+            transcribe(src, fmt, Console(file=io.StringIO()), output_path=out_path,
+                       translate=translate)
+        finally:
+            _whisper_lock.release()
         if not out_path.exists():
             raise RuntimeError("Whisper produced no output")
         _job_update(job_id, status="done", stage="", **stash_result(
@@ -338,7 +414,7 @@ async def convert_url(req: UrlConvertRequest, request: Request):
 
     temp_dir = tempfile.mkdtemp(prefix="transcripe_dl_")
 
-    try:
+    def download() -> str:
         music_domains = ["spotify.com", "music.apple.com", "deezer.com", "tidal.com", "soundcloud.com", "bandcamp.com"]
         if any(domain in url.lower() for domain in music_domains):
             # spotdl high-fidelity resolution
@@ -348,11 +424,11 @@ async def convert_url(req: UrlConvertRequest, request: Request):
                 "--output", temp_dir,
                 "--format", target_fmt if target_fmt in ["mp3", "m4a", "flac", "ogg", "opus"] else "mp3"
             ]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            files = glob.glob(os.path.join(temp_dir, "*.*"))
-            
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=JOB_TIMEOUT)
+            picked = pick_download(temp_dir)
+
             # Fallback to rotated yt-dlp audio extractor
-            if not files:
+            if not picked:
                 out_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
                 yt_cmd = [
                     tool_path("yt-dlp"),
@@ -362,12 +438,12 @@ async def convert_url(req: UrlConvertRequest, request: Request):
                     "--geo-bypass",
                     url
                 ]
-                subprocess.run(yt_cmd, capture_output=True, text=True, timeout=120)
-                files = glob.glob(os.path.join(temp_dir, "*.*"))
+                subprocess.run(yt_cmd, capture_output=True, text=True, timeout=JOB_TIMEOUT)
+                picked = pick_download(temp_dir)
 
-            if not files:
+            if not picked:
                 raise HTTPException(status_code=500, detail=f"Music extraction failed for {url}")
-            output_file = files[0]
+            return picked
         else:
             # Scalable yt-dlp extraction with credential & browser profile rotation
             out_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
@@ -397,21 +473,24 @@ async def convert_url(req: UrlConvertRequest, request: Request):
                 yt_opts = [yt_bin, "-f", h264_fmt, "--merge-output-format", "mp4",
                            "-o", out_template] + common_flags + [url]
 
-            res = subprocess.run(yt_opts, capture_output=True, text=True, timeout=120)
-            files = glob.glob(os.path.join(temp_dir, "*.*"))
-            
+            res = subprocess.run(yt_opts, capture_output=True, text=True, timeout=JOB_TIMEOUT)
+            picked = pick_download(temp_dir)
+
             # Pass 2: Retry with credential & cookie profile rotation if rate-limited or private
-            if not files:
+            if not picked:
                 rotated_cookie = get_rotated_cookie_flag(req.useBrowserCookies)
                 fallback_opts = [yt_bin, "-o", out_template] + common_flags + rotated_cookie + [url]
-                subprocess.run(fallback_opts, capture_output=True, text=True, timeout=120)
-                files = glob.glob(os.path.join(temp_dir, "*.*"))
+                subprocess.run(fallback_opts, capture_output=True, text=True, timeout=JOB_TIMEOUT)
+                picked = pick_download(temp_dir)
 
-            if not files:
+            if not picked:
                 clean_err = re.sub(r'\s+', ' ', res.stderr).strip()[:180] if res.stderr else ""
                 err_msg = f"Unable to extract media from link. {clean_err if clean_err else 'Verify link accessibility.'}"
                 raise HTTPException(status_code=500, detail=err_msg)
-            output_file = files[0]
+            return picked
+
+    try:
+        output_file = await run_blocking(download)
 
         filename = os.path.basename(output_file)
         ext = os.path.splitext(filename)[1] or f".{target_fmt}"
@@ -496,14 +575,17 @@ async def convert_file(
     IMAGE_FMTS = {"png", "jpg", "jpeg", "webp", "bmp", "tiff", "gif", "ico"}
     src_ext = os.path.splitext(safe_in)[1].lower().lstrip(".")
 
-    try:
+    is_image_work = (
+        target_fmt in IMAGE_FMTS or src_ext in IMAGE_FMTS | {"heic", "heif", "avif"})
+    if is_image_work and target_fmt not in IMAGE_FMTS:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise HTTPException(status_code=422,
+                            detail=f"Can't turn an image into .{target_fmt}.")
+
+    def encode():
         # Images go through Pillow, not ffmpeg: ffmpeg can't read HEIC/AVIF at
         # all, and those are exactly what phones hand over.
-        if target_fmt in IMAGE_FMTS or src_ext in IMAGE_FMTS | {"heic", "heif", "avif"}:
-            if target_fmt not in IMAGE_FMTS:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Can't turn an image into .{target_fmt}.")
+        if is_image_work:
             import io
             from pathlib import Path
 
@@ -513,10 +595,12 @@ async def convert_file(
 
             convert_image(Path(input_path), target_fmt, Console(file=io.StringIO()),
                           output_path=Path(output_path))
-            res = None
-        else:
-            cmd = build_cmd(target_fmt)
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            return None
+        return subprocess.run(build_cmd(target_fmt), capture_output=True,
+                              text=True, timeout=JOB_TIMEOUT)
+
+    try:
+        res = await run_blocking(encode)
 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             if deliver == "link":
