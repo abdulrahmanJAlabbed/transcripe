@@ -18,6 +18,7 @@ import {
 } from "react";
 import { CleanHeroBackground } from "./components/CleanHeroBackground";
 import { services, Service } from "./data/services";
+import { api, setToken } from "./token";
 
 /* ── Format knowledge ────────────────────────────────────────────────────── */
 
@@ -168,6 +169,7 @@ export function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [globalDrag, setGlobalDrag] = useState(false);
   const [engineOnline, setEngineOnline] = useState<boolean | null>(null);
+  const [engineLocked, setEngineLocked] = useState(false);
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
   const [copiedEngine, setCopiedEngine] = useState<string | null>(null);
   const [pipCopied, copyPip] = useCopy();
@@ -199,15 +201,19 @@ export function App() {
     return () => window.clearInterval(t);
   }, [phase]);
 
-  /* Local engine heartbeat. */
+  /* Local engine heartbeat. Health is open even on a token-locked studio, so
+     "running but locked" reads differently from "not running". */
   useEffect(() => {
     let alive = true;
     const check = async () => {
       try {
-        const res = await fetch("/api/health", {
+        const res = await api("/api/health", {
           signal: AbortSignal.timeout(2500)
         });
-        if (alive) setEngineOnline(res.ok);
+        const info = res.ok ? await res.json().catch(() => null) : null;
+        if (!alive) return;
+        setEngineOnline(res.ok);
+        setEngineLocked(!!info?.auth_required && !info?.authorized);
       } catch {
         if (alive) setEngineOnline(false);
       }
@@ -377,7 +383,7 @@ export function App() {
 
   const runUrlConvert = async (signal: AbortSignal): Promise<OutFile[]> => {
     setStatusLabel(`Fetching ${platform ?? "link"} → .${target}`);
-    const res = await fetch("/api/convert/url", {
+    const res = await api("/api/convert/url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -404,7 +410,7 @@ export function App() {
       const body = new FormData();
       body.append("file", file);
       body.append("targetFormat", target);
-      const res = await fetch("/api/convert/file", { method: "POST", body, signal });
+      const res = await api("/api/convert/file", { method: "POST", body, signal });
       if (!res.ok) throw new Error(`${file.name}: ${await failDetail(res)}`);
       const blob = await res.blob();
       const name =
@@ -789,14 +795,30 @@ export function App() {
               <div className="offline-chip" role="status">
                 <span>
                   Local engine is offline — start it with{" "}
-                  <code>python server.py</code>
+                  <code>transcripe studio</code>
                 </span>
                 <button
-                  onClick={() => copyOffline("python server.py")}
+                  onClick={() => copyOffline("transcripe studio")}
                   aria-label="Copy start command"
                 >
                   {offlineCopied ? <Check size={13} /> : <Copy size={13} />}
                 </button>
+              </div>
+            )}
+
+            {engineOnline && engineLocked && (
+              <div className="offline-chip" role="status">
+                <span>
+                  This studio is open to the network, so it needs its token —
+                  paste the one it printed on startup.
+                </span>
+                <input
+                  className="token-input"
+                  type="password"
+                  placeholder="token"
+                  onChange={(e) => setToken(e.target.value)}
+                  aria-label="Studio token"
+                />
               </div>
             )}
 

@@ -225,6 +225,8 @@ transcripe --self-test --slow   # also exercise the transcription pipeline
 | `TRANSCRIPE_DOC_BACKEND` | auto               | Force document→PDF backend (`libreoffice` / `msoffice`) |
 | `TRANSCRIPE_HOST`        | `127.0.0.1`        | Studio bind address — `0.0.0.0` exposes it to your LAN  |
 | `TRANSCRIPE_PORT`        | `8000`             | Studio port                                             |
+| `TRANSCRIPE_TOKEN`       | auto on LAN        | Shared token for the studio API (see below)             |
+| `TRANSCRIPE_MAX_UPLOAD_MB` | `2048`           | Reject uploads larger than this                         |
 | `TRANSCRIPE_ORIGINS`     | site + dev ports   | Comma-separated CORS origins for the browser studio     |
 | `TRANSCRIPE_NO_OPEN`     | unset              | Set to `1` to stop the studio opening a browser tab      |
 
@@ -258,6 +260,12 @@ engine over your Wi-Fi:
 ```bash
 transcripe studio --lan     # same as TRANSCRIPE_HOST=0.0.0.0
 ```
+
+On loopback the studio needs no ceremony. The moment it's reachable from the
+network it mints a token and prints the two lines to paste into `mobile/.env` —
+these endpoints fetch arbitrary URLs (optionally with your browser cookies) and
+write to your disk, which isn't something to leave open on café Wi-Fi. Set
+`TRANSCRIPE_TOKEN` yourself to keep one token across restarts.
 
 ---
 

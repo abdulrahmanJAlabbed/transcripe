@@ -1272,6 +1272,23 @@ a {
   background: var(--card);
 }
 
+.token-input {
+  flex: none;
+  width: 116px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--card);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--ink);
+  outline: none;
+}
+
+.token-input:focus {
+  border-color: var(--clay);
+}
+
 .drop-veil {
   position: fixed;
   inset: 0;

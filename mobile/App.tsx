@@ -89,6 +89,7 @@ function Studio() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<FsFile | null>(null);
   const [engineOn, setEngineOn] = useState<boolean | null>(null);
+  const [engineLocked, setEngineLocked] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const slide = useRef(new Animated.Value(0)).current;
@@ -104,8 +105,10 @@ function Studio() {
   useEffect(() => {
     let alive = true;
     const ping = async () => {
-      const ok = await health();
-      if (alive) setEngineOn(ok);
+      const info = await health();
+      if (!alive) return;
+      setEngineOn(!!info);
+      setEngineLocked(!!info?.auth_required && !info?.authorized);
     };
     ping();
     const t = setInterval(ping, 15000);
@@ -337,7 +340,13 @@ function Studio() {
                 ]}
               />
               <Mono style={{ fontSize: 10.5 }}>
-                {engineOn === null ? "checking" : engineOn ? "engine on" : "engine off"}
+                {engineOn === null
+                  ? "checking"
+                  : !engineOn
+                  ? "engine off"
+                  : engineLocked
+                  ? "locked"
+                  : "engine on"}
               </Mono>
             </View>
           </View>
@@ -490,8 +499,21 @@ function Studio() {
                 <Body style={{ fontSize: 13, color: c.ink2 }}>
                   Engine offline. On your laptop:{" "}
                   <Text style={{ fontFamily: f.mono, fontSize: 12 }}>
-                    TRANSCRIPE_HOST=0.0.0.0 python server.py
+                    transcripe studio --lan
                   </Text>
+                </Body>
+              </View>
+            )}
+
+            {engineOn && engineLocked && (
+              <View style={st.note}>
+                <Body style={{ fontSize: 13, color: c.ink2 }}>
+                  The engine is reachable but locked. Copy the token it printed
+                  on startup into{" "}
+                  <Text style={{ fontFamily: f.mono, fontSize: 12 }}>
+                    EXPO_PUBLIC_API_TOKEN
+                  </Text>{" "}
+                  in mobile/.env, then restart Expo.
                 </Body>
               </View>
             )}

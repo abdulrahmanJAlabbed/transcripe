@@ -27,14 +27,17 @@ ip -4 addr | grep -v 127.0.0.1 | grep inet     # Linux
 ipconfig getifaddr en0                          # macOS
 ```
 
-Copy `.env.example` to `.env` and fill in that address:
+Copy `.env.example` to `.env` and fill in that address plus the token the
+studio printed when it started:
 
 ```
 EXPO_PUBLIC_API_URL=http://192.168.0.105:8000
+EXPO_PUBLIC_API_TOKEN=me0Os_SWGMS1cIpIsrvYs2sv
 ```
 
-Keep the `http://` and the `:8000`. This is the only value you need to fill in;
-everything else is already configured.
+`transcripe studio --lan` prints both lines ready to paste — a studio open to
+the network is token-protected, since it downloads from arbitrary URLs and
+writes to your laptop's disk. Keep the `http://` and the `:8000`.
 
 **3 — Start the app:**
 
@@ -55,6 +58,7 @@ The dot next to the wordmark is the engine heartbeat, polled every 15 seconds:
 | Dot | Meaning |
 | --- | --- |
 | green — *engine on* | the app can reach your laptop; convert away |
+| green — *locked* | reachable, but the token is missing or wrong — check `EXPO_PUBLIC_API_TOKEN` and restart Expo |
 | red — *engine off* | engine not running, wrong IP in `.env`, different Wi-Fi, or a firewall blocking port 8000 |
 
 **From my phone** picks a video or photo from the camera roll (or any file via

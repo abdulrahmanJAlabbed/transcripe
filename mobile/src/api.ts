@@ -4,7 +4,15 @@ import { Directory, File, Paths } from "expo-file-system";
 export const API =
   process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, "") || "http://127.0.0.1:8000";
 
+/** A studio open to the network prints a token on startup. */
+const TOKEN = process.env.EXPO_PUBLIC_API_TOKEN?.trim() || "";
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return TOKEN ? { ...extra, "X-Transcripe-Token": TOKEN } : extra;
+}
+
 export type Delivered = { download: string; filename: string };
+export type Health = { auth_required?: boolean; authorized?: boolean };
 
 async function detail(res: Response): Promise<string> {
   try {
@@ -15,12 +23,17 @@ async function detail(res: Response): Promise<string> {
   }
 }
 
-export async function health(signal?: AbortSignal): Promise<boolean> {
+/** null = unreachable. Otherwise the engine's own view of this client. */
+export async function health(signal?: AbortSignal): Promise<Health | null> {
   try {
-    const res = await fetch(`${API}/api/health`, { signal });
-    return res.ok;
+    const res = await fetch(`${API}/api/health`, {
+      headers: authHeaders(),
+      signal
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as Health;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -31,7 +44,10 @@ async function pull(job: Delivered): Promise<File> {
   if (!dir.exists) dir.create({ intermediates: true });
   const dest = new File(dir, job.filename);
   if (dest.exists) dest.delete();
-  await File.downloadFileAsync(`${API}${job.download}`, dest, { idempotent: true });
+  await File.downloadFileAsync(`${API}${job.download}`, dest, {
+    idempotent: true,
+    headers: authHeaders()
+  });
   return dest;
 }
 
@@ -41,7 +57,7 @@ export async function convertUrl(
 ): Promise<File> {
   const res = await fetch(`${API}/api/convert/url`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ ...input, deliver: "link" }),
     signal
   });
@@ -65,6 +81,7 @@ export async function convertFile(
 
   const res = await fetch(`${API}/api/convert/file`, {
     method: "POST",
+    headers: authHeaders(),
     body,
     signal
   });

@@ -11,7 +11,7 @@ import subprocess
 import time
 from datetime import datetime
 from urllib.parse import quote
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -62,6 +62,27 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# --- Access control -------------------------------------------------------
+# Loopback-only (the default) needs no ceremony. The moment the studio is
+# reachable from the network, work is gated on a shared token: these endpoints
+# fetch arbitrary URLs — with your browser cookies — and write to your disk,
+# so an open port on a café network is not something to hand out by accident.
+AUTH_TOKEN = os.environ.get("TRANSCRIPE_TOKEN", "").strip()
+MAX_UPLOAD_BYTES = int(float(os.environ.get("TRANSCRIPE_MAX_UPLOAD_MB", "2048")) * 1024 * 1024)
+
+
+def require_token(request: Request) -> None:
+    """Gate an endpoint on the shared token, when one is configured."""
+    if not AUTH_TOKEN:
+        return
+    supplied = (
+        request.headers.get("x-transcripe-token")
+        or request.query_params.get("token")
+        or ""
+    )
+    if not secrets.compare_digest(supplied, AUTH_TOKEN):
+        raise HTTPException(status_code=401, detail="Missing or wrong studio token")
 
 # --- Scalable Scraper Pool & Rotator ---
 USER_AGENTS = [
@@ -118,7 +139,8 @@ def stash_result(path: str, temp_dir: str, filename: str) -> dict:
 
 
 @app.get("/api/result/{token}")
-def fetch_result(token: str):
+def fetch_result(token: str, request: Request):
+    require_token(request)
     with _results_lock:
         entry = _results.pop(token, None)
     if not entry or not os.path.exists(entry["path"]):
@@ -164,18 +186,29 @@ def get_rotated_cookie_flag(allow_browser: bool = True) -> list:
     return ["--cookies-from-browser", profile]
 
 @app.get("/api/health")
-def health_check():
+def health_check(request: Request):
+    """Open on purpose, so a client can tell a stopped engine from a locked
+    one. Says whether a token is required and whether this one passes."""
     return {
         "status": "ok",
-        "engine": "Transcripe Scalable Engine",
-        "pool": {
-            "user_agents_count": len(USER_AGENTS),
-            "cookie_profiles_count": len(COOKIE_PROFILES)
-        }
+        "engine": "Transcripe Studio",
+        "auth_required": bool(AUTH_TOKEN),
+        "authorized": _token_ok(request),
+        "max_upload_mb": round(MAX_UPLOAD_BYTES / 1024 / 1024),
     }
 
+
+def _token_ok(request: Request) -> bool:
+    try:
+        require_token(request)
+        return True
+    except HTTPException:
+        return False
+
+
 @app.post("/api/convert/url")
-async def convert_url(req: UrlConvertRequest):
+async def convert_url(req: UrlConvertRequest, request: Request):
+    require_token(request)
     url = req.url.strip()
     target_fmt = req.format.lower().replace(".", "").strip() or "mp3"
     if not url:
@@ -296,18 +329,33 @@ async def convert_url(req: UrlConvertRequest):
 
 @app.post("/api/convert/file")
 async def convert_file(
+    request: Request,
     file: UploadFile = File(...),
     targetFormat: str = Form("txt"),
     deliver: str = Form("stream"),
 ):
+    require_token(request)
     target_fmt = re.sub(r"[^\w]", "", targetFormat.lower()) or "txt"
     temp_dir = tempfile.mkdtemp(prefix="transcripe_file_")
 
     # Never trust the client filename — strip any path components (path-traversal).
     safe_in = os.path.basename(file.filename or "upload")
     input_path = os.path.join(temp_dir, safe_in)
+    # Copy in chunks with a running total: an unbounded upload would otherwise
+    # be a way to fill the disk of whoever is running the studio.
+    written = 0
     with open(input_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+        while chunk := await file.read(1024 * 1024):
+            written += len(chunk)
+            if written > MAX_UPLOAD_BYTES:
+                f.close()
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File is larger than the {round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB limit "
+                           f"(raise TRANSCRIPE_MAX_UPLOAD_MB to allow more).",
+                )
+            f.write(chunk)
 
     base_name = os.path.splitext(safe_in)[0] or "output"
     output_filename = f"{base_name}_converted.{target_fmt}"
@@ -378,6 +426,18 @@ if os.path.isdir(WEB_DIST):
     def studio_redirect():
         return RedirectResponse("/transcripe/")
 
+def _lan_ip() -> str:
+    """Best-effort local address, by asking the routing table (no packets sent)."""
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return ""
+
+
 def serve(host: str | None = None, port: int | None = None, open_browser: bool | None = None) -> None:
     """Run the studio. Defaults come from the environment so `python -m` and
     `transcripe studio` behave identically."""
@@ -385,16 +445,35 @@ def serve(host: str | None = None, port: int | None = None, open_browser: bool |
 
     import uvicorn
 
+    global AUTH_TOKEN
+
     port = port or int(os.environ.get("TRANSCRIPE_PORT", "8000"))
     # 0.0.0.0 exposes the studio to your LAN (phones, Expo Go dev builds).
     host = host or os.environ.get("TRANSCRIPE_HOST", "127.0.0.1")
     if open_browser is None:
         open_browser = os.environ.get("TRANSCRIPE_NO_OPEN") != "1"
 
+    # Reachable from the network and nobody set a token? Mint one rather than
+    # leave the door open — and print exactly what the phone app needs.
+    exposed = host not in ("127.0.0.1", "localhost", "::1")
+    if exposed and not AUTH_TOKEN:
+        AUTH_TOKEN = secrets.token_urlsafe(18)
+        lan_ip = _lan_ip()
+        print(
+            "\n  Studio is open to your network, so it's token-protected.\n"
+            f"  Put these two lines in mobile/.env:\n\n"
+            f"    EXPO_PUBLIC_API_URL={f'http://{lan_ip}:{port}' if lan_ip else f'http://<this-machine>:{port}'}\n"
+            f"    EXPO_PUBLIC_API_TOKEN={AUTH_TOKEN}\n\n"
+            "  Set TRANSCRIPE_TOKEN yourself to keep one across restarts.\n"
+        )
+
     if WEB_DIST:
         if open_browser:
+            # Hand the browser the token once; the app stores it and cleans the URL.
+            suffix = f"?token={AUTH_TOKEN}" if AUTH_TOKEN else ""
             threading.Timer(
-                0.9, lambda: webbrowser.open(f"http://127.0.0.1:{port}/transcripe/")
+                0.9,
+                lambda: webbrowser.open(f"http://127.0.0.1:{port}/transcripe/{suffix}"),
             ).start()
     else:
         print(
