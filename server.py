@@ -119,13 +119,21 @@ def tool_path(name: str) -> str:
             return cand
     return name
 
-def get_rotated_cookie_flag() -> list:
+def get_rotated_cookie_flag(allow_browser: bool = True) -> list:
+    """Cookie flags for the retry pass.
+
+    An exported cookie file is an explicit, deliberate opt-in, so it is always
+    honored. Reading cookies straight out of a live browser profile is not, so
+    it happens only when the caller asked for it.
+    """
     config_cookies = glob.glob(os.path.expanduser("~/.config/transcripe/cookies*.txt"))
     if config_cookies:
         selected_file = random.choice(config_cookies)
         return ["--cookies", selected_file]
-    
-    # Rotate browser cookie extraction
+
+    if not allow_browser:
+        return []
+
     profile = random.choice(COOKIE_PROFILES)
     return ["--cookies-from-browser", profile]
 
@@ -213,7 +221,7 @@ async def convert_url(req: UrlConvertRequest):
             
             # Pass 2: Retry with credential & cookie profile rotation if rate-limited or private
             if not files:
-                rotated_cookie = get_rotated_cookie_flag()
+                rotated_cookie = get_rotated_cookie_flag(req.useBrowserCookies)
                 fallback_opts = [yt_bin, "-o", out_template] + common_flags + rotated_cookie + [url]
                 subprocess.run(fallback_opts, capture_output=True, text=True, timeout=120)
                 files = glob.glob(os.path.join(temp_dir, "*.*"))
