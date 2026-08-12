@@ -44,7 +44,8 @@ archives = ["py7zr>=0.20.0", "rarfile>=4.0"]
 threed = ["trimesh>=4.0.0"]
 # Browser studio + the API the phone app talks to (`transcripe studio`).
 studio = [
-    "fastapi>=0.100.0",
+    # ≥0.115 pulls a Starlette whose TestClient works with modern httpx.
+    "fastapi>=0.115.0",
     "uvicorn>=0.23.0",
     "python-multipart>=0.0.6",
     "yt-dlp>=2024.1.0",
