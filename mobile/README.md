@@ -10,14 +10,15 @@ Built with Expo SDK 54 — runs in **Expo Go**, no Xcode or Android Studio neede
 
 ## Run it in three steps
 
-**1 — Start the engine on your laptop** (from the repo root):
+**1 — Start the engine on your laptop:**
 
 ```bash
+transcripe studio --lan          # or, from a git checkout:
 TRANSCRIPE_HOST=0.0.0.0 python server.py
 ```
 
-`0.0.0.0` is the part that matters: the default `127.0.0.1` is only reachable
-by the laptop itself, so your phone would see nothing.
+`--lan` is the part that matters — it binds `0.0.0.0`. The default `127.0.0.1`
+is only reachable by the laptop itself, so your phone would see nothing.
 
 **2 — Tell the app where the engine is.** Find your laptop's LAN address:
 

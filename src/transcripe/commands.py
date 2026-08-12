@@ -515,15 +515,31 @@ def fix_encoding_cmd(
         _fail(e)
 
 
+def studio_cmd(
+    host: str = typer.Option(None, "--host", help="Bind address; 0.0.0.0 opens it to your LAN"),
+    port: int = typer.Option(None, "--port", help="Port (default 8000)"),
+    no_open: bool = typer.Option(False, "--no-open", help="Don't open a browser"),
+    lan: bool = typer.Option(False, "--lan", help="Shorthand for --host 0.0.0.0 (for the phone app)"),
+):
+    """Serve the browser studio (and the API the phone app talks to)."""
+    try:
+        from transcripe.studio import serve
+    except ImportError as e:
+        _fail(RuntimeError(
+            f"Studio needs its extras — pip install 'transcripe[studio]' ({e})"))
+    serve(host="0.0.0.0" if lan else host, port=port, open_browser=not no_open)
+
+
 # ── registration ────────────────────────────────────────────────────────────
 
 SUBCOMMANDS = {"convert", "pdf", "media", "image", "data", "archive", "model",
-               "ui", "fix-encoding", "--help", "--doctor", "--self-test", "--slow"}
+               "ui", "studio", "fix-encoding", "--help", "--doctor", "--self-test", "--slow"}
 
 
 def register(app: typer.Typer) -> None:
     app.command("convert")(convert_cmd)
     app.command("ui")(ui_cmd)
+    app.command("studio")(studio_cmd)
     app.command("fix-encoding")(fix_encoding_cmd)
     app.add_typer(pdf_app, name="pdf")
     app.add_typer(media_app, name="media")

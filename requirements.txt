@@ -25,3 +25,10 @@ ocrmypdf>=16.0.0
 pyarrow>=15.0.0
 weasyprint>=60.0
 textual>=0.60.0
+
+# Studio: browser UI + the API the phone app talks to (transcripe studio)
+fastapi>=0.100.0
+uvicorn>=0.23.0
+python-multipart>=0.0.6
+yt-dlp>=2024.1.0
+spotdl>=4.2.0

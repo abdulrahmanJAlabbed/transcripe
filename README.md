@@ -241,17 +241,23 @@ Beyond the CLI, Transcripe ships a local studio for the everyday jobs —
 converting media and grabbing links.
 
 ```bash
-cd web && npm install && npm run build && cd ..
-python server.py            # serves the studio at http://localhost:8000/transcripe/
+pip install "transcripe[studio]"
+cd web && npm install && npm run build && cd ..   # builds the UI (git checkout only)
+transcripe studio                                  # http://localhost:8000/transcripe/
 ```
 
 One process, one command: it serves the built UI *and* the conversion API, and
 opens your browser. Drop a file anywhere on the page, or paste a link anywhere,
 and it converts locally. Chrome and Edge offer to install it as a desktop app.
+From a git checkout, `python server.py` does the same thing. Without a built
+UI the API still runs — the studio says so instead of failing.
 
 A phone app lives in [`mobile/`](mobile/README.md) — Expo Go, same design, same
-engine over your Wi-Fi. Start the engine with `TRANSCRIPE_HOST=0.0.0.0` so the
-phone can reach it.
+engine over your Wi-Fi:
+
+```bash
+transcripe studio --lan     # same as TRANSCRIPE_HOST=0.0.0.0
+```
 
 ---
 

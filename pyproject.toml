@@ -42,8 +42,16 @@ images = ["Pillow>=10.0.0", "pillow-heif>=0.16.0", "cairosvg>=2.7.0"]
 data = ["pandas>=2.0.0", "openpyxl>=3.1.0", "pyyaml>=6.0.0", "pyarrow>=15.0.0"]
 archives = ["py7zr>=0.20.0", "rarfile>=4.0"]
 threed = ["trimesh>=4.0.0"]
+# Browser studio + the API the phone app talks to (`transcripe studio`).
+studio = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "python-multipart>=0.0.6",
+    "yt-dlp>=2024.1.0",
+]
+music = ["spotdl>=4.2.0"]
 all = [
-    "transcripe[whisper,ocr,pdf,docs,images,data,archives,threed]",
+    "transcripe[whisper,ocr,pdf,docs,images,data,archives,threed,studio]",
 ]
 
 [project.scripts]
@@ -57,3 +65,5 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "transcripe.engines" = ["js/package.json", "js/*.js"]
+# Built studio UI, when a release ships one (see transcripe/studio.py).
+"transcripe" = ["web_dist/**/*"]
