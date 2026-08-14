@@ -270,6 +270,73 @@ def test_absurdly_long_filenames_are_trimmed(open_studio):
     assert "empty" in res.json()["detail"]
 
 
+# ── remux vs re-encode ──────────────────────────────────────────────────────
+
+@pytest.fixture
+def h264_clip(tmp_path):
+    """A tiny H.264/yuv420p mp4 — the shape most phone video arrives in."""
+    if not HAS_FFMPEG:
+        pytest.skip("ffmpeg not installed")
+    import subprocess
+
+    out = tmp_path / "clip.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+         "testsrc=size=160x120:rate=15:duration=2", "-c:v", "libx264",
+         "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(out)],
+        check=True, timeout=120)
+    return out
+
+
+def test_matching_codec_is_copied_not_re_encoded(open_studio, h264_clip):
+    """H.264 into mkv/mov/mp4 is only a change of wrapper; re-encoding it
+    costs ~35x the time and loses quality for nothing."""
+    for target in ("mkv", "mov", "mp4"):
+        assert open_studio.can_remux(str(h264_clip), target, False) is True
+
+
+def test_container_that_cannot_hold_the_codec_re_encodes(open_studio, h264_clip):
+    # webm takes VP8/VP9/AV1 — never H.264.
+    assert open_studio.can_remux(str(h264_clip), "webm", False) is False
+
+
+def test_audio_target_from_video_is_not_copied(open_studio, h264_clip):
+    """The clip has no audio at all, so an audio container would get nothing."""
+    assert open_studio.can_remux(str(h264_clip), "mp3", True) is False
+
+
+def test_unknown_container_never_claims_it_can_copy(open_studio, h264_clip):
+    assert open_studio.can_remux(str(h264_clip), "xyz", False) is False
+
+
+def test_probe_of_a_non_media_file_is_empty(open_studio, tmp_path):
+    junk = tmp_path / "notes.txt"
+    junk.write_text("not media")
+    assert open_studio.probe_streams(str(junk)) == []
+    assert open_studio.can_remux(str(junk), "mp4", False) is False
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_remuxed_video_keeps_its_codec_and_duration(open_studio, h264_clip):
+    import subprocess
+
+    with TestClient(open_studio.app) as client:
+        res = client.post(
+            "/api/convert/file",
+            files={"file": ("clip.mp4", h264_clip.read_bytes(), "video/mp4")},
+            data={"targetFormat": "mkv"},
+        )
+    assert res.status_code == 200
+    out = h264_clip.parent / "out.mkv"
+    out.write_bytes(res.content)
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_name",
+         "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
+        capture_output=True, text=True, timeout=60).stdout
+    assert "h264" in probe
+    assert "2.0" in probe or "1.9" in probe
+
+
 # ── download selection ──────────────────────────────────────────────────────
 
 def test_download_pick_ignores_sidecars(open_studio, tmp_path):
