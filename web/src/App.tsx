@@ -163,6 +163,7 @@ const WEB_ABLE: Record<string, Mode> = {
 export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const jobRef = useRef<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const [mode, setMode] = useState<Mode>("file");
@@ -440,6 +441,7 @@ export function App() {
     const started = await api("/api/transcribe", { method: "POST", body, signal });
     if (!started.ok) throw new Error(`${file.name}: ${await failDetail(started)}`);
     const { job, model } = await started.json();
+    jobRef.current = job;
 
     for (;;) {
       if (signal.aborted) throw new DOMException("aborted", "AbortError");
@@ -450,7 +452,11 @@ export function App() {
       if (state.status === "error") throw new Error(`${file.name}: ${state.detail}`);
       if (state.stage) setStatusLabel(`${prefix}${state.stage}`);
       else setStatusLabel(`${prefix}transcribing ${file.name} with ${model}`);
+      if (state.status === "cancelled") {
+        throw new DOMException("aborted", "AbortError");
+      }
       if (state.status === "done") {
+        jobRef.current = null;
         const dl = await api(state.download, { signal });
         if (!dl.ok) throw new Error(`${file.name}: could not fetch the transcript`);
         return {
@@ -461,28 +467,59 @@ export function App() {
     }
   };
 
+  const convertOne = async (file: File, signal: AbortSignal): Promise<OutFile> => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("targetFormat", target);
+    const res = await api("/api/convert/file", { method: "POST", body, signal });
+    if (!res.ok) throw new Error(`${file.name}: ${await failDetail(res)}`);
+    const blob = await res.blob();
+    const name =
+      filenameFromDisposition(res.headers.get("content-disposition")) ||
+      `${file.name.replace(/\.[^.]+$/, "")}.${target}`;
+    return { name, url: URL.createObjectURL(blob) };
+  };
+
+  /* The engine converts several files at once, so a batch shouldn't queue
+     itself single-file. Keep a few in flight and report progress by count;
+     transcription stays one at a time, since Whisper is serialized anyway. */
   const runFileConvert = async (signal: AbortSignal): Promise<OutFile[]> => {
-    const results: OutFile[] = [];
     const transcribing = TEXT_TARGETS.includes(target);
-    for (let i = 0; i < entries.length; i++) {
-      const { file } = entries[i];
-      const prefix = entries.length > 1 ? `${i + 1} of ${entries.length} · ` : "";
-      if (transcribing) {
-        results.push(await runTranscribe(file, prefix, signal));
-        continue;
+    const total = entries.length;
+
+    if (transcribing || total === 1) {
+      const results: OutFile[] = [];
+      for (let i = 0; i < total; i++) {
+        const { file } = entries[i];
+        const prefix = total > 1 ? `${i + 1} of ${total} · ` : "";
+        if (transcribing) {
+          results.push(await runTranscribe(file, prefix, signal));
+        } else {
+          setStatusLabel(`${file.name} → .${target}`);
+          results.push(await convertOne(file, signal));
+        }
       }
-      setStatusLabel(`${prefix}${file.name} → .${target}`);
-      const body = new FormData();
-      body.append("file", file);
-      body.append("targetFormat", target);
-      const res = await api("/api/convert/file", { method: "POST", body, signal });
-      if (!res.ok) throw new Error(`${file.name}: ${await failDetail(res)}`);
-      const blob = await res.blob();
-      const name =
-        filenameFromDisposition(res.headers.get("content-disposition")) ||
-        `${file.name.replace(/\.[^.]+$/, "")}.${target}`;
-      results.push({ name, url: URL.createObjectURL(blob) });
+      return results;
     }
+
+    const results: OutFile[] = new Array(total);
+    let next = 0;
+    let done = 0;
+    setStatusLabel(`converting ${total} files → .${target}`);
+
+    const worker = async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= total) return;
+        results[i] = await convertOne(entries[i].file, signal);
+        done += 1;
+        setStatusLabel(`${done} of ${total} converted → .${target}`);
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(3, total) }, worker)
+    );
     return results;
   };
 
@@ -511,7 +548,16 @@ export function App() {
     }
   };
 
-  const cancel = () => abortRef.current?.abort();
+  /* Tell the engine too — otherwise the laptop keeps transcribing for a
+     result the browser has already walked away from. */
+  const cancel = () => {
+    const job = jobRef.current;
+    if (job) {
+      jobRef.current = null;
+      api(`/api/jobs/${job}/cancel`, { method: "POST" }).catch(() => {});
+    }
+    abortRef.current?.abort();
+  };
 
   const startOver = () => {
     setEntries([]);

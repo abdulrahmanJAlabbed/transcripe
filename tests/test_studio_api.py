@@ -194,6 +194,30 @@ def test_unknown_job_is_not_found(open_studio):
         assert client.get("/api/jobs/made-up-job").status_code == 404
 
 
+def test_cancelling_a_queued_job_stops_it_before_it_starts(open_studio):
+    """A job cancelled while waiting its turn must never reach the model."""
+    import time as _time
+
+    job_id = "test-job"
+    with open_studio._jobs_lock:
+        open_studio._jobs[job_id] = {
+            "status": "queued", "stage": "queued", "touched": _time.time()}
+
+    with TestClient(open_studio.app) as client:
+        assert client.post(f"/api/jobs/{job_id}/cancel").json()["status"] == "cancelled"
+        assert client.get(f"/api/jobs/{job_id}").json()["cancelled"] is True
+
+
+def test_cancelling_an_unknown_job_is_not_found(open_studio):
+    with TestClient(open_studio.app) as client:
+        assert client.post("/api/jobs/nope/cancel").status_code == 404
+
+
+def test_cancel_needs_the_token_too(locked_studio):
+    with TestClient(locked_studio.app) as client:
+        assert client.post("/api/jobs/anything/cancel").status_code == 401
+
+
 def test_empty_upload_is_named_plainly(open_studio):
     with TestClient(open_studio.app) as client:
         res = client.post(

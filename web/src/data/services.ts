@@ -68,9 +68,10 @@ export const services: Service[] = [
     title: "Whisper AI Transcription",
     summary: "Create TXT or SRT subtitles from lectures, meetings, podcasts, and recordings.",
     inputs: ["mp4", "mkv", "mov", "webm", "avi", "3gp", "mp3", "wav", "m4a", "flac", "aac", "ogg", "opus", "wma"],
-    outputs: ["txt", "srt", "vtt"],
+    // Whisper writes txt/srt; .vtt comes from the subtitle workbench afterwards.
+    outputs: ["txt", "srt"],
     command: "transcripe media transcribe meeting.mp4 --srt",
-    api: "POST /api/jobs/transcribe",
+    api: "POST /api/transcribe",
     engine: "faster-whisper + FFmpeg",
     speed: "GPU when available, CPU fallback",
     privacy: "ephemeral-server",

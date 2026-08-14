@@ -36,6 +36,7 @@ import {
 } from "react-native-safe-area-context";
 import {
   API,
+  cancelJob,
   convertFile,
   convertUrl,
   health,
@@ -100,7 +101,18 @@ function Studio() {
   const [engineLocked, setEngineLocked] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
+  const jobRef = useRef<string | null>(null);
   const slide = useRef(new Animated.Value(0)).current;
+
+  /* Cancelling should free the laptop, not just stop this phone listening. */
+  const cancelWork = () => {
+    const job = jobRef.current;
+    if (job) {
+      jobRef.current = null;
+      cancelJob(job);
+    }
+    abortRef.current?.abort();
+  };
 
   const kind: Kind | null = picked ? kindOf(picked.ext) : null;
   const platform = detectPlatform(url);
@@ -265,8 +277,12 @@ function Studio() {
             format: target
           },
           setStatus,
+          (job) => {
+            jobRef.current = job;
+          },
           controller.signal
         );
+        jobRef.current = null;
       } else {
         setStatus(`${picked!.name} → .${target}`);
         out = await convertFile(
@@ -590,7 +606,7 @@ function Studio() {
                 </View>
                 <Track animate={slide} />
                 <Tap
-                  onPress={() => abortRef.current?.abort()}
+                  onPress={cancelWork}
                   style={{ alignSelf: "center", paddingVertical: 6 }}
                 >
                   <Body style={{ fontSize: 13, color: c.ink3 }}>Cancel</Body>

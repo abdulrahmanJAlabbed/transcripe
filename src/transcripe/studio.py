@@ -382,11 +382,20 @@ def _run_transcribe(job_id: str, input_path: str, temp_dir: str, fmt: str, trans
 
     from transcripe.engines.audio_video import MODEL_SIZE, transcribe
 
+    def cancelled() -> bool:
+        with _jobs_lock:
+            return bool(_jobs.get(job_id, {}).get("cancelled"))
+
     try:
         if not _whisper_lock.acquire(blocking=False):
             _job_update(job_id, status="running", stage="waiting for the transcriber")
             _whisper_lock.acquire()
         try:
+            # Someone gave up while this waited its turn — don't start at all.
+            if cancelled():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                _job_update(job_id, status="cancelled", stage="")
+                return
             _job_update(job_id, status="running",
                         stage=f"loading Whisper ({MODEL_SIZE}) — the first run downloads it")
             src = Path(input_path)
@@ -398,6 +407,11 @@ def _run_transcribe(job_id: str, input_path: str, temp_dir: str, fmt: str, trans
             _whisper_lock.release()
         if not out_path.exists():
             raise RuntimeError("Whisper produced no output")
+        if cancelled():
+            # Free the disk now instead of parking a transcript nobody wants.
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            _job_update(job_id, status="cancelled", stage="")
+            return
         _job_update(job_id, status="done", stage="", **stash_result(
             str(out_path), temp_dir, out_path.name))
     except Exception as e:  # surfaced verbatim to the client
@@ -452,6 +466,25 @@ def job_status(job_id: str, request: Request):
     if job is None:
         raise HTTPException(status_code=404, detail="No such job (it may have expired)")
     return {k: v for k, v in job.items() if k != "touched"}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, request: Request):
+    """Give up on a transcription.
+
+    A job still waiting its turn never starts; one already inside Whisper runs
+    to the end (the model can't be interrupted mid-file) but throws its output
+    away instead of parking a transcript nobody asked for.
+    """
+    require_token(request)
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="No such job (it may have expired)")
+        job["cancelled"] = True
+        job["touched"] = time.time()
+        status = job.get("status")
+    return {"status": "cancelled" if status in ("queued", "running") else status}
 
 
 @app.post("/api/convert/url")

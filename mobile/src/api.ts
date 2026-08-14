@@ -84,9 +84,21 @@ export async function convertUrl(
 }
 
 /** Whisper runs for minutes, so this is a job: start, poll, then pull. */
+export async function cancelJob(job: string): Promise<void> {
+  try {
+    await fetch(`${API}/api/jobs/${job}/cancel`, {
+      method: "POST",
+      headers: authHeaders()
+    });
+  } catch {
+    /* the laptop will time the job out on its own */
+  }
+}
+
 export async function transcribeFile(
   input: { uri: string; name: string; mimeType?: string; format: string },
   onStage: (stage: string) => void,
+  onJob: (job: string) => void,
   signal?: AbortSignal
 ): Promise<File> {
   const body = new FormData();
@@ -105,6 +117,7 @@ export async function transcribeFile(
   });
   if (!started.ok) throw new Error(await detail(started));
   const { job, model } = (await started.json()) as { job: string; model: string };
+  onJob(job);
 
   for (;;) {
     if (signal?.aborted) throw new DOMException("aborted", "AbortError");
@@ -122,6 +135,7 @@ export async function transcribeFile(
       filename?: string;
     };
     if (state.status === "error") throw new Error(state.detail || "Transcription failed");
+    if (state.status === "cancelled") throw new DOMException("aborted", "AbortError");
     onStage(state.stage || `transcribing with ${model}`);
     if (state.status === "done" && state.download && state.filename) {
       return pull({ download: state.download, filename: state.filename });
