@@ -26,6 +26,7 @@ import { LiveStats } from "./components/LiveStats";
 import { useMagnetic, useScrollReveal, useSpotlight } from "./motion";
 import { services, Service } from "./data/services";
 import { api, setToken } from "./token";
+import { canConvertLocally, convertImageLocally } from "./local";
 // Inlined so the code themes itself (currentColor) and costs no extra request.
 import appQr from "./qr-app.svg?raw";
 import { applyTheme, currentTheme, watchSystemTheme, type Theme } from "./theme";
@@ -216,6 +217,7 @@ export function App() {
   // heartbeat answers, and treated as capable so nothing flickers away.
   const [features, setFeatures] = useState<Record<string, boolean>>({});
   const [theme, setTheme] = useState<Theme>(() => currentTheme());
+  const [localCount, setLocalCount] = useState(0);
   useScrollReveal();
   const ctaRef = useMagnetic<HTMLButtonElement>();
   const spotlightRef = useSpotlight<HTMLDivElement>();
@@ -519,6 +521,17 @@ export function App() {
   };
 
   const convertOne = async (file: File, signal: AbortSignal): Promise<OutFile> => {
+    /* The visitor's machine first: no upload, no queue, no engine needed. */
+    if (canConvertLocally(extOf(file.name), target)) {
+      try {
+        const done = await convertImageLocally(file, target);
+        setLocalCount((n) => n + 1);
+        return { name: done.name, url: URL.createObjectURL(done.blob) };
+      } catch {
+        /* browser couldn't decode it — hand it to the engine instead */
+      }
+    }
+
     const body = new FormData();
     body.append("file", file);
     body.append("targetFormat", target);
@@ -1114,10 +1127,16 @@ export function App() {
           <LiveStats online={engineOnline} />
 
           <p className="trust reveal d5">
-            {HOSTED ? (
+            {localCount > 0 ? (
               <>
-                this demo converts on the server · files{" "}
-                <b>deleted right after</b> · install it to keep them home
+                <b>{localCount}</b>{" "}
+                {localCount === 1 ? "file" : "files"} converted{" "}
+                <b>on this device</b> · never uploaded anywhere
+              </>
+            ) : HOSTED ? (
+              <>
+                images convert in your browser · everything else on the server ·{" "}
+                <b>deleted right after</b>
               </>
             ) : (
               <>
