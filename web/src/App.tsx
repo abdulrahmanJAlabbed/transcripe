@@ -1,11 +1,15 @@
 import {
+  Apple,
   ArrowRight,
   Check,
   Clipboard,
   Copy,
   Download,
+  Moon,
   Plus,
   RotateCcw,
+  Smartphone,
+  Sun,
   X
 } from "lucide-react";
 import {
@@ -17,8 +21,14 @@ import {
   useState
 } from "react";
 import { CleanHeroBackground } from "./components/CleanHeroBackground";
+import { HeroWave } from "./components/HeroWave";
+import { LiveStats } from "./components/LiveStats";
+import { useMagnetic, useScrollReveal, useSpotlight } from "./motion";
 import { services, Service } from "./data/services";
 import { api, setToken } from "./token";
+// Inlined so the code themes itself (currentColor) and costs no extra request.
+import appQr from "./qr-app.svg?raw";
+import { applyTheme, currentTheme, watchSystemTheme, type Theme } from "./theme";
 
 /* ── Format knowledge ────────────────────────────────────────────────────── */
 
@@ -57,7 +67,22 @@ const TEXT_TARGETS = ["srt", "txt"];
    Built with VITE_HOSTED=1; the local studio leaves it unset. */
 const HOSTED = import.meta.env.VITE_HOSTED === "1";
 
+/* Where the phone buttons and the QR point. Swap this for an `exp://` link
+   once the app is published with `eas update` and scanning will launch it
+   directly instead of opening the setup notes. */
+const APP_QR_TARGET =
+  "https://github.com/abdulrahmanJAlabbed/Transcripe/blob/main/mobile/README.md";
+
 const URL_TARGETS = ["mp4", "mp3", "m4a", "wav", "flac"];
+
+/* Every format the engines touch, for the ticker. Duplicated in the DOM so the
+   loop is seamless. */
+const FORMAT_TICKER = [
+  "mp4", "mkv", "mov", "webm", "avi", "mp3", "wav", "flac", "m4a", "ogg",
+  "opus", "aac", "srt", "vtt", "ass", "pdf", "docx", "pptx", "xlsx", "epub",
+  "png", "jpg", "webp", "avif", "heic", "svg", "tiff", "csv", "json", "yaml",
+  "parquet", "xml", "zip", "7z", "tar", "rar", "glb", "obj", "stl", "fbx"
+];
 
 const PLATFORMS: Array<[string[], string]> = [
   [["youtube.com", "youtu.be"], "YouTube"],
@@ -190,6 +215,10 @@ export function App() {
   // What the engine on the other end can actually do. Unknown until the first
   // heartbeat answers, and treated as capable so nothing flickers away.
   const [features, setFeatures] = useState<Record<string, boolean>>({});
+  const [theme, setTheme] = useState<Theme>(() => currentTheme());
+  useScrollReveal();
+  const ctaRef = useMagnetic<HTMLButtonElement>();
+  const spotlightRef = useSpotlight<HTMLDivElement>();
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
   const [copiedEngine, setCopiedEngine] = useState<string | null>(null);
   const [pipCopied, copyPip] = useCopy();
@@ -222,6 +251,10 @@ export function App() {
     const t = window.setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => window.clearInterval(t);
   }, [phase]);
+
+  /* Until a side is chosen the stylesheet follows the OS; this keeps the
+     browser chrome in step with it. */
+  useEffect(watchSystemTheme, []);
 
   /* Local engine heartbeat. Health is open even on a token-locked studio, so
      "running but locked" reads differently from "not running". */
@@ -736,6 +769,18 @@ export function App() {
           Transcripe<span className="dot">.</span>
         </a>
         <nav className="site-nav">
+          <button
+            className="theme-toggle"
+            onClick={() => {
+              const next: Theme = theme === "dark" ? "light" : "dark";
+              applyTheme(next);
+              setTheme(next);
+            }}
+            aria-label={theme === "dark" ? "Switch to light" : "Switch to dark"}
+            title={theme === "dark" ? "Lights on" : "Lights low"}
+          >
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
           {engineOnline !== null && (
             <span
               className={`engine-status ${engineOnline ? "on" : "off"}`}
@@ -782,6 +827,8 @@ export function App() {
               ? "Transcribe a lecture, pull a reel, convert anything — try it here, then install it so your files never leave your machine."
               : "Transcribe a lecture, pull a reel, convert anything — sixteen engines that run on your machine and answer to no cloud."}
           </p>
+
+          <HeroWave />
 
           <div className="card reveal d4" ref={cardRef}>
             <div className="seg" data-mode={mode} role="tablist">
@@ -1051,7 +1098,7 @@ export function App() {
                 </div>
               </div>
             ) : (
-              <button className="cta" disabled={!canConvert} onClick={convert}>
+              <button className="cta" ref={ctaRef} disabled={!canConvert} onClick={convert}>
                 {mode === "url"
                   ? `Fetch & convert${target ? ` to .${target}` : ""}`
                   : kind === "other"
@@ -1063,6 +1110,8 @@ export function App() {
               </button>
             )}
           </div>
+
+          <LiveStats online={engineOnline} />
 
           <p className="trust reveal d5">
             {HOSTED ? (
@@ -1079,7 +1128,7 @@ export function App() {
         </section>
 
         <section className="engines shell" id="engines">
-          <div className="sec-head">
+          <div className="sec-head" data-reveal>
             <h2>
               Sixteen engines, <em>one</em> keystroke each.
             </h2>
@@ -1090,7 +1139,7 @@ export function App() {
             </p>
           </div>
 
-          <div className="engine-grid">
+          <div className="engine-grid" data-reveal>
             {services.map((s) => {
               const Icon = s.icon;
               const webMode = WEB_ABLE[s.id];
@@ -1145,8 +1194,65 @@ export function App() {
           </div>
         </section>
 
+        <div className="marquee" aria-hidden="true">
+          <div className="marquee-track">
+            {[...FORMAT_TICKER, ...FORMAT_TICKER].map((fmt, i) => (
+              <span className="marquee-item" key={`${fmt}-${i}`}>
+                {fmt}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <section className="pocket shell" id="app">
+          <div className="pocket-copy" data-reveal>
+            <h2>
+              Take it <em>with you</em>.
+            </h2>
+            <p>
+              The phone app picks a video or a link and hands it to the engine
+              on your laptop. Same design, same privacy — your files stay on
+              your own Wi-Fi.
+            </p>
+            <div className="store-row">
+              <a
+                className="store-btn"
+                href={APP_QR_TARGET}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Apple size={20} strokeWidth={1.6} />
+                <span>
+                  <small>Run it on</small>
+                  iPhone
+                </span>
+              </a>
+              <a
+                className="store-btn"
+                href={APP_QR_TARGET}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Smartphone size={20} strokeWidth={1.6} />
+                <span>
+                  <small>Run it on</small>
+                  Android
+                </span>
+              </a>
+            </div>
+            <p className="pocket-note">
+              Both open in <b>Expo Go</b> — no store account, no sideloading.
+            </p>
+          </div>
+
+          <div className="pocket-qr" data-reveal data-reveal-delay="120">
+            <div className="qr-frame" dangerouslySetInnerHTML={{ __html: appQr }} />
+            <span className="qr-cap">scan to set it up</span>
+          </div>
+        </section>
+
         <section className="cli-band shell">
-          <div className="term">
+          <div className="term" data-reveal ref={spotlightRef}>
             <button
               className={`term-copy ${termCopied ? "copied" : ""}`}
               onClick={() => copyTerm("pip install transcripe")}

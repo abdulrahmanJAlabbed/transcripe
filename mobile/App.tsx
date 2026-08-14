@@ -1,11 +1,10 @@
 // Subpath imports keep the bundle to the six faces we actually draw with,
 // instead of every weight in each family.
 import { useFonts } from "expo-font";
-import { Fraunces_500Medium } from "@expo-google-fonts/fraunces/500Medium";
-import { Fraunces_500Medium_Italic } from "@expo-google-fonts/fraunces/500Medium_Italic";
 import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
 import { Inter_500Medium } from "@expo-google-fonts/inter/500Medium";
 import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
+import { Inter_700Bold } from "@expo-google-fonts/inter/700Bold";
 import { JetBrainsMono_400Regular } from "@expo-google-fonts/jetbrains-mono/400Regular";
 import { JetBrainsMono_500Medium } from "@expo-google-fonts/jetbrains-mono/500Medium";
 import * as Clipboard from "expo-clipboard";
@@ -16,7 +15,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Sharing from "expo-sharing";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -54,7 +53,7 @@ import {
   URL_TARGETS,
   type Kind
 } from "./src/formats";
-import { c, f, radius, shadow } from "./src/theme";
+import { f, Palette, radius, shadows, usePalette } from "./src/theme";
 import { Body, Chip, Cta, Display, Label, loopSlide, Mono, Segmented, Tap, Track } from "./src/ui";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -73,15 +72,17 @@ export default function App() {
 
 function Studio() {
   const insets = useSafeAreaInsets();
+  const { c, isDark } = usePalette();
+  const st = useMemo(() => makeStyles(c, isDark), [c, isDark]);
+  const shadow = useMemo(() => shadows(isDark), [isDark]);
   const { width } = useWindowDimensions();
   const cardWidth = Math.min(width - 32, 520);
 
   const [fontsLoaded] = useFonts({
-    Fraunces_500Medium,
-    Fraunces_500Medium_Italic,
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
+    Inter_700Bold,
     JetBrainsMono_400Regular,
     JetBrainsMono_500Medium
   });
@@ -368,7 +369,7 @@ function Studio() {
 
   return (
     <View style={st.root} onLayout={onLayoutRoot}>
-      <StatusBar style="dark" />
+      <StatusBar style={isDark ? "light" : "dark"} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -413,7 +414,7 @@ function Studio() {
             <Label>local · private · yours</Label>
             <Display style={{ marginTop: 12 }}>
               Every file,{" "}
-              <Text style={{ fontFamily: f.displayItalic, color: c.clay }}>
+              <Text style={{ fontFamily: f.display, color: c.clay }}>
                 quietly
               </Text>{" "}
               transformed.
@@ -668,7 +669,9 @@ function Studio() {
   );
 }
 
-const st = StyleSheet.create({
+const makeStyles = (c: Palette, isDark: boolean) => {
+  const shadow = shadows(isDark);
+  return StyleSheet.create({
   root: { flex: 1, backgroundColor: c.paper },
   boot: { flex: 1, alignItems: "center", justifyContent: "center" },
   scroll: { alignItems: "center", paddingHorizontal: 16 },
@@ -681,8 +684,9 @@ const st = StyleSheet.create({
     marginBottom: 26
   },
   wordmark: {
-    fontFamily: f.displayItalic,
-    fontSize: 21,
+    fontFamily: f.display,
+    fontSize: 20,
+    letterSpacing: -0.6,
     color: c.ink
   },
   statusPill: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -825,3 +829,4 @@ const st = StyleSheet.create({
   },
   doneName: { fontFamily: f.bodySemi, fontSize: 14.5, color: c.ink }
 });
+};

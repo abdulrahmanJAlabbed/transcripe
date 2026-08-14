@@ -234,6 +234,81 @@ def get_rotated_cookie_flag(allow_browser: bool = True) -> list:
     profile = random.choice(COOKIE_PROFILES)
     return ["--cookies-from-browser", profile]
 
+# --- Telemetry -------------------------------------------------------------
+# Small, in-memory, and reset with the process: enough for the studio to show
+# what the engine is actually doing rather than a decorative animation.
+_started_at = time.time()
+_stats_lock = threading.Lock()
+_stats = {"jobs": 0, "failed": 0, "bytes_in": 0, "bytes_out": 0, "seconds": 0.0}
+_recent: list = []
+_active: dict = {}
+
+
+def record_job(kind: str, name: str, target: str, bytes_in: int, bytes_out: int,
+               seconds: float, ok: bool) -> None:
+    with _stats_lock:
+        _stats["jobs"] += 1
+        if not ok:
+            _stats["failed"] += 1
+        _stats["bytes_in"] += max(0, bytes_in)
+        _stats["bytes_out"] += max(0, bytes_out)
+        _stats["seconds"] += max(0.0, seconds)
+        _recent.insert(0, {
+            "kind": kind,
+            "name": name[:60],
+            "target": target,
+            "bytes": bytes_out,
+            "seconds": round(seconds, 2),
+            "ok": ok,
+            "at": time.time(),
+        })
+        del _recent[24:]
+
+
+class track_job:
+    """Time a unit of work and publish it while it runs."""
+
+    def __init__(self, kind: str, name: str, target: str, bytes_in: int = 0):
+        self.kind, self.name, self.target, self.bytes_in = kind, name, target, bytes_in
+        self.id = secrets.token_urlsafe(6)
+        self.bytes_out = 0
+
+    def __enter__(self):
+        self.t0 = time.time()
+        with _stats_lock:
+            _active[self.id] = {"kind": self.kind, "name": self.name[:60],
+                                "target": self.target, "since": self.t0}
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        with _stats_lock:
+            _active.pop(self.id, None)
+        record_job(self.kind, self.name, self.target, self.bytes_in,
+                   self.bytes_out, time.time() - self.t0, exc_type is None)
+        return False
+
+
+@app.get("/api/stats")
+def stats(request: Request):
+    """What this engine has done since it started."""
+    require_token(request)
+    with _stats_lock:
+        totals = dict(_stats)
+        recent = list(_recent)
+        active = [
+            {**job, "elapsed": round(time.time() - job["since"], 1)}
+            for job in _active.values()
+        ]
+    return {
+        "uptime": round(time.time() - _started_at),
+        "cores": os.cpu_count(),
+        "parallel": MAX_PARALLEL_JOBS,
+        "totals": totals,
+        "active": active,
+        "recent": recent,
+    }
+
+
 def engine_features() -> dict:
     """What this particular engine can actually do.
 
@@ -419,8 +494,11 @@ def _run_transcribe(job_id: str, input_path: str, temp_dir: str, fmt: str, trans
             src = Path(input_path)
             out_path = src.with_suffix(f".{fmt}")
             # The engine narrates to a Rich console; give it one that goes nowhere.
-            transcribe(src, fmt, Console(file=io.StringIO()), output_path=out_path,
-                       translate=translate)
+            with track_job("transcribe", src.name, fmt, src.stat().st_size) as job:
+                transcribe(src, fmt, Console(file=io.StringIO()), output_path=out_path,
+                           translate=translate)
+                if out_path.exists():
+                    job.bytes_out = out_path.stat().st_size
         finally:
             _whisper_lock.release()
         if not out_path.exists():
@@ -591,7 +669,9 @@ async def convert_url(req: UrlConvertRequest, request: Request):
             return picked
 
     try:
-        output_file = await run_blocking(download)
+        with track_job("link", url, target_fmt) as job:
+            output_file = await run_blocking(download)
+            job.bytes_out = os.path.getsize(output_file)
 
         filename = os.path.basename(output_file)
         ext = os.path.splitext(filename)[1] or f".{target_fmt}"
@@ -701,7 +781,16 @@ async def convert_file(
                               text=True, timeout=JOB_TIMEOUT)
 
     try:
-        res = await run_blocking(encode)
+        with track_job("convert", safe_in, target_fmt,
+                       os.path.getsize(input_path)) as job:
+            res = await run_blocking(encode)
+            if os.path.exists(output_path):
+                job.bytes_out = os.path.getsize(output_path)
+            if not job.bytes_out:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Could not convert {safe_in} to .{target_fmt}. "
+                           f"{ffmpeg_reason(res.stderr if res else '') or 'That combination of formats is not supported.'}")
 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             if deliver == "link":
