@@ -255,6 +255,18 @@ which runs as a background job you can watch (and cancel). Chrome and Edge offer
 From a git checkout, `python server.py` does the same thing. Without a built
 UI the API still runs — the studio says so instead of failing.
 
+There's a public demo at **[alabed.work/transcripe](https://alabed.work/transcripe/)**.
+It converts on that server rather than on your machine, and says so — the
+private path is the local install above. Deploy it with:
+
+```bash
+./deploy.sh            # site + engine   (or: ./deploy.sh site | engine)
+```
+
+Every deploy backs up what it replaces into `/var/backups` on the VM. The demo
+box has no Whisper, so it reports that through `/api/health` and the UI simply
+doesn't offer transcription there.
+
 A phone app lives in [`mobile/`](mobile/README.md) — Expo Go, same design, same
 engine over your Wi-Fi:
 
