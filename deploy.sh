@@ -42,7 +42,12 @@ deploy_site() {
 deploy_engine() {
   echo "→ building the wheel"
   rm -f dist/*.whl
-  python3 -m build --wheel >/dev/null
+  # The project venv is where `build` lives; system python usually lacks it.
+  PY=python3
+  for candidate in .venv/bin/python venv/bin/python; do
+    [ -x "$candidate" ] && PY="$candidate" && break
+  done
+  "$PY" -m build --wheel >/dev/null
   WHEEL=$(ls dist/*.whl | head -1)
   put "$WHEEL" "/tmp/$(basename "$WHEEL")"
   run "set -e
