@@ -99,6 +99,7 @@ function Studio() {
   const [result, setResult] = useState<FsFile | null>(null);
   const [engineOn, setEngineOn] = useState<boolean | null>(null);
   const [engineLocked, setEngineLocked] = useState(false);
+  const [canTranscribe, setCanTranscribe] = useState(true);
 
   const abortRef = useRef<AbortController | null>(null);
   const jobRef = useRef<string | null>(null);
@@ -139,6 +140,8 @@ function Studio() {
         misses = 0;
         setEngineOn(true);
         setEngineLocked(!!info.auth_required && !info.authorized);
+        // An engine without Whisper shouldn't be offered transcription.
+        if (info.features) setCanTranscribe(info.features.transcribe !== false);
       } else {
         misses += 1;
         if (misses >= 2) setEngineOn(false);
@@ -351,7 +354,9 @@ function Studio() {
       ? [...TARGETS[kind].main, ...(TARGETS[kind].audio ?? [])]
       : [];
   const textTargets =
-    mode === "file" && kind && kind !== "other" ? TARGETS[kind].text ?? [] : [];
+    canTranscribe && mode === "file" && kind && kind !== "other"
+      ? TARGETS[kind].text ?? []
+      : [];
 
   if (!fontsLoaded) {
     return (

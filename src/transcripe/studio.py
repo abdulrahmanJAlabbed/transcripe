@@ -234,6 +234,23 @@ def get_rotated_cookie_flag(allow_browser: bool = True) -> list:
     profile = random.choice(COOKIE_PROFILES)
     return ["--cookies-from-browser", profile]
 
+def engine_features() -> dict:
+    """What this particular engine can actually do.
+
+    A studio on a small server may have ffmpeg but no Whisper; clients use
+    this to stop offering a conversion that is certain to fail. find_spec
+    avoids importing these heavy modules just to answer a heartbeat.
+    """
+    import importlib.util
+
+    return {
+        "media": bool(shutil.which("ffmpeg")),
+        "images": importlib.util.find_spec("PIL") is not None,
+        "transcribe": importlib.util.find_spec("faster_whisper") is not None,
+        "download": bool(shutil.which(tool_path("yt-dlp")) or tool_path("yt-dlp") != "yt-dlp"),
+    }
+
+
 @app.get("/api/health")
 def health_check(request: Request):
     """Open on purpose, so a client can tell a stopped engine from a locked
@@ -244,6 +261,7 @@ def health_check(request: Request):
         "auth_required": bool(AUTH_TOKEN),
         "authorized": _token_ok(request),
         "max_upload_mb": round(MAX_UPLOAD_BYTES / 1024 / 1024),
+        "features": engine_features(),
     }
 
 

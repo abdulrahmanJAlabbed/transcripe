@@ -52,6 +52,11 @@ const TARGETS: Record<
 
 const TEXT_TARGETS = ["srt", "txt"];
 
+/* The public demo converts on a server, not on the visitor's machine. Saying
+   otherwise would be a lie, so the hosted build says what actually happens.
+   Built with VITE_HOSTED=1; the local studio leaves it unset. */
+const HOSTED = import.meta.env.VITE_HOSTED === "1";
+
 const URL_TARGETS = ["mp4", "mp3", "m4a", "wav", "flac"];
 
 const PLATFORMS: Array<[string[], string]> = [
@@ -182,6 +187,9 @@ export function App() {
   const [globalDrag, setGlobalDrag] = useState(false);
   const [engineOnline, setEngineOnline] = useState<boolean | null>(null);
   const [engineLocked, setEngineLocked] = useState(false);
+  // What the engine on the other end can actually do. Unknown until the first
+  // heartbeat answers, and treated as capable so nothing flickers away.
+  const [features, setFeatures] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
   const [copiedEngine, setCopiedEngine] = useState<string | null>(null);
   const [pipCopied, copyPip] = useCopy();
@@ -197,6 +205,8 @@ export function App() {
   };
 
   const platform = useMemo(() => detectPlatform(mediaUrl), [mediaUrl]);
+  // Assume yes until an engine tells us otherwise, so the chips don't flicker.
+  const canTranscribe = features.transcribe !== false;
 
   const kind: Kind | null = entries.length ? kindOf(entries[0].ext) : null;
   const cliService: Service | null = useMemo(() => {
@@ -230,6 +240,7 @@ export function App() {
         misses = 0;
         setEngineOnline(res.ok);
         setEngineLocked(!!info?.auth_required && !info?.authorized);
+        if (info?.features) setFeatures(info.features);
       } catch {
         if (!alive) return;
         misses += 1;
@@ -243,6 +254,13 @@ export function App() {
       window.clearInterval(t);
     };
   }, []);
+
+  /* If the engine turns out to have no Whisper, don't leave a transcript
+     target armed — it would only fail on submit. */
+  useEffect(() => {
+    if (canTranscribe || !TEXT_TARGETS.includes(target) || !kind || kind === "other") return;
+    setTarget(TARGETS[kind].main[0]);
+  }, [canTranscribe, target, kind]);
 
   /* Release result blobs when they're replaced. */
   useEffect(
@@ -669,7 +687,7 @@ export function App() {
               ))}
             </>
           )}
-          {opts.text && (
+          {opts.text && canTranscribe && (
             <>
               <span className="chip-divider">transcribe</span>
               {opts.text.map((fmt) => (
@@ -677,12 +695,17 @@ export function App() {
                   key={fmt}
                   className={`chip ${target === fmt ? "active" : ""}`}
                   onClick={() => setTarget(fmt)}
-                  title="Whisper, running on this machine"
+                  title="Whisper, running on the engine"
                 >
                   .{fmt}
                 </button>
               ))}
             </>
+          )}
+          {opts.text && !canTranscribe && engineOnline && (
+            <span className="chip-divider">
+              transcription needs the local studio
+            </span>
           )}
         </div>
       </div>
@@ -748,13 +771,16 @@ export function App() {
 
       <main>
         <section className="hero shell" id="top">
-          <p className="eyebrow reveal d1">Local · Private · Open source</p>
+          <p className="eyebrow reveal d1">
+            {HOSTED ? "Live demo · Open source" : "Local · Private · Open source"}
+          </p>
           <h1 className="reveal d2">
             Every file, <em>quietly</em> transformed.
           </h1>
           <p className="lede reveal d3">
-            Transcribe a lecture, pull a reel, convert anything — sixteen
-            engines that run on your machine and answer to no cloud.
+            {HOSTED
+              ? "Transcribe a lecture, pull a reel, convert anything — try it here, then install it so your files never leave your machine."
+              : "Transcribe a lecture, pull a reel, convert anything — sixteen engines that run on your machine and answer to no cloud."}
           </p>
 
           <div className="card reveal d4" ref={cardRef}>
@@ -1039,7 +1065,16 @@ export function App() {
           </div>
 
           <p className="trust reveal d5">
-            processed in memory · streamed back · <b>deleted immediately</b>
+            {HOSTED ? (
+              <>
+                this demo converts on the server · files{" "}
+                <b>deleted right after</b> · install it to keep them home
+              </>
+            ) : (
+              <>
+                processed in memory · streamed back · <b>deleted immediately</b>
+              </>
+            )}
           </p>
         </section>
 

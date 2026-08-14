@@ -12,7 +12,11 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
 }
 
 export type Delivered = { download: string; filename: string };
-export type Health = { auth_required?: boolean; authorized?: boolean };
+export type Health = {
+  auth_required?: boolean;
+  authorized?: boolean;
+  features?: Record<string, boolean>;
+};
 
 async function detail(res: Response): Promise<string> {
   try {

@@ -40,3 +40,5 @@ output/
 
 # Personal CV/resume workspace — contains private data, keep out of the repo
 cv_editor/
+# Hosted build output
+web/dist-hosted/
