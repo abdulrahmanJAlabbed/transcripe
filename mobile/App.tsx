@@ -315,8 +315,16 @@ function Studio() {
             mimeType: picked!.mimeType,
             format: target
           },
+          (fraction) => {
+            const pct = Math.round(fraction * 100);
+            setStatus(`${picked!.name} → .${target}${pct ? ` · ${pct}%` : ""}`);
+          },
+          (job) => {
+            jobRef.current = job;
+          },
           controller.signal
         );
+        jobRef.current = null;
       }
       setResult(out);
       setPhase("done");

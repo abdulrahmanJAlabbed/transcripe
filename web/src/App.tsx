@@ -544,7 +544,46 @@ export function App() {
     }
   };
 
-  const convertOne = async (file: File, signal: AbortSignal): Promise<OutFile> => {
+  /* Server-side conversions run as a job so ffmpeg's own progress can be
+     shown, instead of a bar that slides about telling you nothing. */
+  const convertOnServer = async (
+    file: File,
+    signal: AbortSignal,
+    label: (text: string) => void
+  ): Promise<OutFile> => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("targetFormat", target);
+    body.append("deliver", "job");
+    const started = await api("/api/convert/file", { method: "POST", body, signal });
+    if (!started.ok) throw new Error(`${file.name}: ${await failDetail(started)}`);
+    const { job } = await started.json();
+    jobRef.current = job;
+
+    for (;;) {
+      if (signal.aborted) throw new DOMException("aborted", "AbortError");
+      await new Promise((r) => setTimeout(r, 700));
+      const res = await api(`/api/jobs/${job}`, { signal });
+      if (!res.ok) throw new Error(`${file.name}: ${await failDetail(res)}`);
+      const state = await res.json();
+      if (state.status === "error") throw new Error(`${file.name}: ${state.detail}`);
+      if (state.status === "cancelled") throw new DOMException("aborted", "AbortError");
+      const pct = Math.round((state.progress ?? 0) * 100);
+      label(`${file.name} → .${target}${pct ? ` · ${pct}%` : ""}`);
+      if (state.status === "done") {
+        jobRef.current = null;
+        const dl = await api(state.download, { signal });
+        if (!dl.ok) throw new Error(`${file.name}: could not fetch the result`);
+        return { name: state.filename, url: URL.createObjectURL(await dl.blob()) };
+      }
+    }
+  };
+
+  const convertOne = async (
+    file: File,
+    signal: AbortSignal,
+    label?: (text: string) => void
+  ): Promise<OutFile> => {
     /* The visitor's machine first: no upload, no queue, no engine needed. */
     const from = extOf(file.name);
     if (canConvertLocally(from, target)) {
@@ -570,6 +609,8 @@ export function App() {
         /* container or codec the page can't handle — the engine can */
       }
     }
+
+    if (label) return convertOnServer(file, signal, label);
 
     const body = new FormData();
     body.append("file", file);
@@ -598,8 +639,7 @@ export function App() {
         if (transcribing) {
           results.push(await runTranscribe(file, prefix, signal));
         } else {
-          setStatusLabel(`${file.name} → .${target}`);
-          results.push(await convertOne(file, signal));
+          results.push(await convertOne(file, signal, setStatusLabel));
         }
       }
       return results;

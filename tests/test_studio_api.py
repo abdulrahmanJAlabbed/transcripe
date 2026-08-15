@@ -184,6 +184,72 @@ def test_link_delivery_hands_back_a_single_use_url(open_studio, fixtures):
         assert client.get(job["download"]).status_code == 404
 
 
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_a_partial_download_can_be_resumed(open_studio, fixtures):
+    """Phones lose signal. Without ranges the whole transfer restarts, which on
+    a large video is the difference between a hiccup and giving up."""
+    with TestClient(open_studio.app) as client:
+        started = client.post(
+            "/api/convert/file",
+            files={"file": ("clip.wav", wav_bytes(fixtures), "audio/wav")},
+            data={"targetFormat": "mp3", "deliver": "link"},
+        )
+        url = started.json()["download"]
+
+        head = client.get(url, headers={"Range": "bytes=0-99"})
+        assert head.status_code == 206
+        assert head.headers["accept-ranges"] == "bytes"
+        assert head.headers["content-range"].startswith("bytes 0-99/")
+        total = int(head.headers["content-range"].split("/")[1])
+
+        # The token must survive a partial read, or resuming is impossible.
+        rest = client.get(url, headers={"Range": f"bytes=100-"})
+        assert rest.status_code == 206
+        assert head.content + rest.content == b"".join([head.content, rest.content])
+        assert len(head.content) + len(rest.content) == total
+
+        # ...and be spent once the last byte has gone.
+        assert client.get(url).status_code == 404
+
+
+def test_a_range_past_the_end_is_refused(open_studio, fixtures):
+    with TestClient(open_studio.app) as client:
+        started = client.post(
+            "/api/convert/file",
+            files={"file": ("clip.wav", wav_bytes(fixtures), "audio/wav")},
+            data={"targetFormat": "wav", "deliver": "link"},
+        )
+        url = started.json()["download"]
+        assert client.get(url, headers={"Range": "bytes=99999999-"}).status_code == 416
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_job_delivery_reports_progress_and_finishes(open_studio, fixtures):
+    """An indeterminate bar tells you nothing about a conversion that might run
+    for twenty minutes; ffmpeg will say how far along it is if asked."""
+    import time as _time
+
+    with TestClient(open_studio.app) as client:
+        started = client.post(
+            "/api/convert/file",
+            files={"file": ("clip.wav", wav_bytes(fixtures), "audio/wav")},
+            data={"targetFormat": "flac", "deliver": "job"},
+        )
+        assert started.status_code == 200
+        job = started.json()["job"]
+
+        state = {}
+        for _ in range(80):
+            state = client.get(f"/api/jobs/{job}").json()
+            if state["status"] in ("done", "error"):
+                break
+            _time.sleep(0.25)
+
+        assert state["status"] == "done", state
+        assert state["progress"] == 1.0
+        assert client.get(state["download"]).status_code == 200
+
+
 def test_unknown_result_token_is_not_found(open_studio):
     with TestClient(open_studio.app) as client:
         assert client.get("/api/result/made-up-token").status_code == 404

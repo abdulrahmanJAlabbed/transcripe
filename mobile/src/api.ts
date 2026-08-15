@@ -154,8 +154,12 @@ export async function transcribeFile(
   }
 }
 
+/** Server-side conversion as a job, so the phone can show ffmpeg's own
+ *  progress rather than a bar that means nothing. */
 export async function convertFile(
   input: { uri: string; name: string; mimeType?: string; format: string },
+  onProgress?: (fraction: number, stage: string) => void,
+  onJob?: (job: string) => void,
   signal?: AbortSignal
 ): Promise<File> {
   const body = new FormData();
@@ -166,7 +170,7 @@ export async function convertFile(
     type: input.mimeType || "application/octet-stream"
   } as unknown as Blob);
   body.append("targetFormat", input.format);
-  body.append("deliver", "link");
+  body.append("deliver", "job");
 
   const res = await fetch(`${API}/api/convert/file`, {
     method: "POST",
@@ -175,5 +179,30 @@ export async function convertFile(
     signal
   });
   if (!res.ok) throw new Error(await detail(res));
-  return pull((await res.json()) as Delivered);
+  const { job } = (await res.json()) as { job: string };
+  onJob?.(job);
+
+  for (;;) {
+    if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+    await new Promise((r) => setTimeout(r, 800));
+    const poll = await fetch(`${API}/api/jobs/${job}`, {
+      headers: authHeaders(),
+      signal
+    });
+    if (!poll.ok) throw new Error(await detail(poll));
+    const state = (await poll.json()) as {
+      status: string;
+      progress?: number;
+      stage?: string;
+      detail?: string;
+      download?: string;
+      filename?: string;
+    };
+    if (state.status === "error") throw new Error(state.detail || "Conversion failed");
+    if (state.status === "cancelled") throw new DOMException("aborted", "AbortError");
+    onProgress?.(state.progress ?? 0, state.stage ?? "");
+    if (state.status === "done" && state.download && state.filename) {
+      return pull({ download: state.download, filename: state.filename });
+    }
+  }
 }

@@ -13,7 +13,7 @@ from datetime import datetime
 from urllib.parse import quote
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
@@ -171,16 +171,73 @@ def stash_result(path: str, temp_dir: str, filename: str) -> dict:
 
 @app.get("/api/result/{token}")
 def fetch_result(token: str, request: Request):
+    """Hand over a finished file, resumably.
+
+    Phones lose signal mid-download. Without range support the whole transfer
+    restarts from zero, which on a 700 MB video is the difference between a
+    hiccup and giving up — so a Range request gets its slice, and the token
+    survives until the file has actually been delivered whole.
+    """
     require_token(request)
     with _results_lock:
-        entry = _results.pop(token, None)
+        entry = _results.get(token)
     if not entry or not os.path.exists(entry["path"]):
         raise HTTPException(status_code=404, detail="Result expired or already downloaded")
+
+    path = entry["path"]
+    size = os.path.getsize(path)
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": f'attachment; filename="{entry["name"]}"',
+    }
+
+    def done_with_it():
+        with _results_lock:
+            _results.pop(token, None)
+        shutil.rmtree(entry["dir"], ignore_errors=True)
+
+    range_header = request.headers.get("range", "")
+    match = re.match(r"bytes=(\d*)-(\d*)", range_header.strip()) if range_header else None
+    if match and (match.group(1) or match.group(2)):
+        if match.group(1):
+            start = int(match.group(1))
+            end = int(match.group(2)) if match.group(2) else size - 1
+        else:  # "bytes=-500" means the last 500 bytes
+            start = max(0, size - int(match.group(2)))
+            end = size - 1
+        if start >= size:
+            raise HTTPException(status_code=416, detail="Range beyond the end of the file",
+                                headers={"Content-Range": f"bytes */{size}"})
+        end = min(end, size - 1)
+        length = end - start + 1
+
+        def slice_bytes():
+            with open(path, "rb") as f:
+                f.seek(start)
+                left = length
+                while left > 0:
+                    chunk = f.read(min(1024 * 256, left))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                    yield chunk
+
+        headers.update({
+            "Content-Range": f"bytes {start}-{end}/{size}",
+            "Content-Length": str(length),
+        })
+        # Only retire the token once the last byte has gone out.
+        cleanup = BackgroundTask(done_with_it) if end == size - 1 else None
+        return StreamingResponse(slice_bytes(), status_code=206, headers=headers,
+                                 media_type="application/octet-stream",
+                                 background=cleanup)
+
     return FileResponse(
-        path=entry["path"],
+        path=path,
         filename=entry["name"],
         media_type="application/octet-stream",
-        background=BackgroundTask(shutil.rmtree, entry["dir"], ignore_errors=True),
+        headers=headers,
+        background=BackgroundTask(done_with_it),
     )
 
 def get_rotated_user_agent() -> str:
@@ -528,6 +585,48 @@ def detect_hw_encoder() -> str:
             except (OSError, subprocess.SubprocessError):
                 continue
         return _hw_encoder
+
+
+def media_duration(path: str) -> float:
+    """Seconds of media, or 0 when it can't be read."""
+    probe = shutil.which("ffprobe") or "ffprobe"
+    try:
+        res = subprocess.run(
+            [probe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=FFPROBE_TIMEOUT)
+        return float(res.stdout.strip() or 0)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0.0
+
+
+def run_ffmpeg_progress(cmd: list, duration: float, on_progress) -> subprocess.CompletedProcess:
+    """Run ffmpeg while reporting how far through it is.
+
+    ffmpeg will describe its own progress on a pipe; without it the apps can
+    only show a bar that slides back and forth and tells you nothing about a
+    conversion that might run for twenty minutes.
+    """
+    full = cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
+    proc = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, bufsize=1)
+    try:
+        for line in proc.stdout:
+            key, _, value = line.strip().partition("=")
+            if key == "out_time_us" and duration > 0:
+                try:
+                    seconds = int(value) / 1_000_000
+                except ValueError:
+                    continue
+                on_progress(max(0.0, min(0.999, seconds / duration)))
+            elif key == "progress" and value == "end":
+                on_progress(1.0)
+        stderr = proc.stderr.read()
+        proc.wait(timeout=JOB_TIMEOUT)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    return subprocess.CompletedProcess(full, proc.returncode, "", stderr)
 
 
 def ffmpeg_reason(stderr: str) -> str:
@@ -984,7 +1083,7 @@ async def convert_file(
         raise HTTPException(status_code=422,
                             detail=f"Can't turn an image into .{target_fmt}.")
 
-    def encode():
+    def encode(on_progress=None):
         if is_subtitle_work or is_data_work:
             import io
             from pathlib import Path
@@ -1015,8 +1114,12 @@ async def convert_file(
             convert_image(Path(input_path), target_fmt, Console(file=io.StringIO()),
                           output_path=Path(output_path))
             return None
-        res = subprocess.run(build_cmd(target_fmt), capture_output=True,
-                             text=True, timeout=JOB_TIMEOUT)
+        if on_progress:
+            res = run_ffmpeg_progress(build_cmd(target_fmt),
+                                      media_duration(input_path), on_progress)
+        else:
+            res = subprocess.run(build_cmd(target_fmt), capture_output=True,
+                                 text=True, timeout=JOB_TIMEOUT)
         # A GPU that passed the probe can still fail on a particular clip
         # (odd dimensions, driver hiccup, another process holding the encoder).
         # Never let that lose someone's conversion — redo it in software.
@@ -1025,6 +1128,35 @@ async def convert_file(
             res = subprocess.run(build_cmd(target_fmt, allow_hw=False),
                                  capture_output=True, text=True, timeout=JOB_TIMEOUT)
         return res
+
+    if deliver == "job":
+        _reap_jobs()
+        job_id = secrets.token_urlsafe(12)
+        with _jobs_lock:
+            _jobs[job_id] = {"status": "queued", "stage": f"{safe_in} → .{target_fmt}",
+                             "progress": 0.0, "touched": time.time()}
+
+        def run_in_background():
+            try:
+                _job_update(job_id, status="running")
+                with track_job("convert", safe_in, target_fmt,
+                               os.path.getsize(input_path)) as tracked:
+                    with _work_slots:
+                        res = encode(lambda p: _job_update(job_id, progress=round(p, 3)))
+                    if not (os.path.exists(output_path) and os.path.getsize(output_path) > 0):
+                        raise RuntimeError(
+                            ffmpeg_reason(res.stderr if res else "")
+                            or f"Could not convert {safe_in} to .{target_fmt}.")
+                    tracked.bytes_out = os.path.getsize(output_path)
+                _job_update(job_id, status="done", progress=1.0, stage="",
+                            **stash_result(output_path, temp_dir, output_filename))
+            except Exception as exc:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                _job_update(job_id, status="error", stage="",
+                            detail=str(exc)[:300] or exc.__class__.__name__)
+
+        threading.Thread(target=run_in_background, daemon=True).start()
+        return {"job": job_id, "filename": output_filename}
 
     try:
         with track_job("convert", safe_in, target_fmt,
