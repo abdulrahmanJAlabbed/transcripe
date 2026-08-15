@@ -330,6 +330,8 @@ def engine_features() -> dict:
         "images": importlib.util.find_spec("PIL") is not None,
         "transcribe": importlib.util.find_spec("faster_whisper") is not None,
         "download": bool(shutil.which(tool_path("yt-dlp")) or tool_path("yt-dlp") != "yt-dlp"),
+        # Without a JS runtime YouTube drops formats and often refuses outright.
+        "js_runtime": bool(js_runtime_args()),
     }
 
 
@@ -420,6 +422,19 @@ def can_remux(input_path: str, target_fmt: str, want_audio_only: bool) -> bool:
 
 
 AUDIO_TARGETS = {"mp3", "m4a", "wav", "aac", "opus", "flac", "ogg"}
+
+# YouTube now hands out a JavaScript challenge that yt-dlp has to run, and it
+# only enables Deno by default. Without a runtime it warns, drops formats, and
+# often fails outright — so hand it whichever engine this machine already has.
+JS_RUNTIMES = ("deno", "node", "bun", "qjs")
+
+
+def js_runtime_args() -> list:
+    for runtime in JS_RUNTIMES:
+        path = shutil.which(runtime)
+        if path:
+            return ["--js-runtimes", f"{runtime}:{path}"]
+    return []
 
 
 def ytdlp_quality_args(target_fmt: str, quality: str = "best") -> list:
@@ -721,6 +736,8 @@ async def convert_url(req: UrlConvertRequest, request: Request):
                 yt_cmd = [
                     tool_path("yt-dlp"),
                     "-x", "--audio-format", target_fmt if target_fmt in ["mp3", "m4a", "wav", "aac", "opus", "flac"] else "mp3",
+                    "--audio-quality", "0",
+                    *js_runtime_args(),
                     "-o", out_template,
                     "--user-agent", get_rotated_user_agent(),
                     "--geo-bypass",
@@ -736,7 +753,7 @@ async def convert_url(req: UrlConvertRequest, request: Request):
             # Scalable yt-dlp extraction with credential & browser profile rotation
             out_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
             
-            common_flags = [
+            common_flags = js_runtime_args() + [
                 "--user-agent", get_rotated_user_agent(),
                 "--referer", url,
                 "--no-check-certificates",

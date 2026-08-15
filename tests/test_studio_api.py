@@ -285,6 +285,19 @@ def test_compatible_mode_still_available_for_old_players(open_studio):
     assert "avc1" in args
 
 
+def test_a_js_runtime_is_offered_to_youtube_when_one_exists(open_studio):
+    """YouTube hands out a JS challenge and yt-dlp only enables Deno itself;
+    with no runtime it drops formats and often fails outright."""
+    import shutil as _shutil
+
+    args = open_studio.js_runtime_args()
+    if any(_shutil.which(r) for r in open_studio.JS_RUNTIMES):
+        assert args[0] == "--js-runtimes"
+        assert ":" in args[1], "pass the resolved path, not just a name"
+    else:
+        assert args == []
+
+
 def test_audio_downloads_ask_for_the_best_encode(open_studio):
     """yt-dlp defaults to --audio-quality 5, about 130 kbps for mp3."""
     args = open_studio.ytdlp_quality_args("mp3", "best")
