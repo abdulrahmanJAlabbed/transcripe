@@ -329,6 +329,9 @@ def engine_features() -> dict:
         "media": bool(shutil.which("ffmpeg")),
         "images": importlib.util.find_spec("PIL") is not None,
         "transcribe": importlib.util.find_spec("faster_whisper") is not None,
+        # Subtitles are pure Python and always present; tabular data needs pandas.
+        "subtitles": True,
+        "data": importlib.util.find_spec("pandas") is not None,
         "download": bool(shutil.which(tool_path("yt-dlp")) or tool_path("yt-dlp") != "yt-dlp"),
         # Without a JS runtime YouTube drops formats and often refuses outright.
         "js_runtime": bool(js_runtime_args()),

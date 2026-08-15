@@ -105,6 +105,7 @@ function Studio() {
   const [engineOn, setEngineOn] = useState<boolean | null>(null);
   const [engineLocked, setEngineLocked] = useState(false);
   const [canTranscribe, setCanTranscribe] = useState(true);
+  const [canData, setCanData] = useState(true);
 
   const abortRef = useRef<AbortController | null>(null);
   const jobRef = useRef<string | null>(null);
@@ -146,7 +147,10 @@ function Studio() {
         setEngineOn(true);
         setEngineLocked(!!info.auth_required && !info.authorized);
         // An engine without Whisper shouldn't be offered transcription.
-        if (info.features) setCanTranscribe(info.features.transcribe !== false);
+        if (info.features) {
+          setCanTranscribe(info.features.transcribe !== false);
+          setCanData(info.features.data !== false);
+        }
       } else {
         misses += 1;
         if (misses >= 2) setEngineOn(false);
@@ -367,7 +371,10 @@ function Studio() {
     mode === "url"
       ? URL_TARGETS
       : kind && kind !== "other"
-      ? [...TARGETS[kind].main, ...(TARGETS[kind].audio ?? [])].filter(
+      ? (kind === "data" && !canData
+          ? []
+          : [...TARGETS[kind].main, ...(TARGETS[kind].audio ?? [])]
+        ).filter(
           (t) => t !== picked?.ext.replace(/^jpeg$/, "jpg")
         )
       : [];

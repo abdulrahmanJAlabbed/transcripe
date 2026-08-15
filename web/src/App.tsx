@@ -245,6 +245,9 @@ export function App() {
   const platform = useMemo(() => detectPlatform(mediaUrl), [mediaUrl]);
   // Assume yes until an engine tells us otherwise, so the chips don't flicker.
   const canTranscribe = features.transcribe !== false;
+  // An engine without pandas can't do tabular data; don't offer what will fail.
+  const engineHandles = (k: Kind | null) =>
+    k !== "data" || features.data !== false;
   const kind: Kind | null = entries.length ? kindOf(entries[0].ext) : null;
   // Converting a file to the format it already is does nothing useful.
   const sourceExt = entries.length ? entries[0].ext.replace(/^jpeg$/, "jpg") : "";
@@ -720,7 +723,7 @@ export function App() {
         </div>
       );
     }
-    if (!kind || kind === "other") return null;
+    if (!kind || kind === "other" || !engineHandles(kind)) return null;
     const opts = TARGETS[kind];
     return (
       <div className="opt">
@@ -1156,6 +1159,8 @@ export function App() {
                   ? `Fetch & convert${target ? ` to .${target}` : ""}`
                   : kind === "other"
                   ? "Use the CLI for this format"
+                  : !engineHandles(kind)
+                  ? "This engine has no spreadsheet support"
                   : isTranscribing
                   ? `Transcribe to .${target}`
                   : `Convert${target ? ` to .${target}` : ""}`}
