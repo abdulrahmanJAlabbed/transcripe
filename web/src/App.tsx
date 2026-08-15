@@ -26,7 +26,12 @@ import { LiveStats } from "./components/LiveStats";
 import { useMagnetic, useScrollReveal, useSpotlight } from "./motion";
 import { services, Service } from "./data/services";
 import { api, setToken } from "./token";
-import { canConvertLocally, convertImageLocally } from "./local";
+import {
+  canConvertLocally,
+  canConvertVideoLocally,
+  convertImageLocally,
+  convertVideoLocally
+} from "./local";
 // Inlined so the code themes itself (currentColor) and costs no extra request.
 import appQr from "./qr-app.svg?raw";
 import { applyTheme, currentTheme, watchSystemTheme, type Theme } from "./theme";
@@ -541,13 +546,28 @@ export function App() {
 
   const convertOne = async (file: File, signal: AbortSignal): Promise<OutFile> => {
     /* The visitor's machine first: no upload, no queue, no engine needed. */
-    if (canConvertLocally(extOf(file.name), target)) {
+    const from = extOf(file.name);
+    if (canConvertLocally(from, target)) {
       try {
         const done = await convertImageLocally(file, target);
         setLocalCount((n) => n + 1);
         return { name: done.name, url: URL.createObjectURL(done.blob) };
       } catch {
         /* browser couldn't decode it — hand it to the engine instead */
+      }
+    }
+    if (canConvertVideoLocally(from, target)) {
+      try {
+        setStatusLabel(`${file.name} → .${target} · on this device`);
+        const done = await convertVideoLocally(file, target, (p) =>
+          setStatusLabel(
+            `${file.name} → .${target} · on this device · ${Math.round(p * 100)}%`
+          )
+        );
+        setLocalCount((n) => n + 1);
+        return { name: done.name, url: URL.createObjectURL(done.blob) };
+      } catch {
+        /* container or codec the page can't handle — the engine can */
       }
     }
 

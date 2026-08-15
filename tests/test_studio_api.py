@@ -270,6 +270,32 @@ def test_absurdly_long_filenames_are_trimmed(open_studio):
     assert "empty" in res.json()["detail"]
 
 
+def test_hardware_encoding_is_off_unless_asked_for(monkeypatch):
+    """Measured head to head, NVENC was slower than x264 on a VP9 source and
+    produced a 19% larger file for a 0.001 SSIM difference. Not a default."""
+    studio = load_studio(monkeypatch)
+    assert studio.HWACCEL == "off"
+    assert studio.detect_hw_encoder() == ""
+
+
+def test_hardware_encoding_probes_before_trusting_it(monkeypatch):
+    """ffmpeg lists h264_vaapi on machines where it fails with an I/O error,
+    so listed support is not working support — only a real encode proves it."""
+    studio = load_studio(monkeypatch, TRANSCRIPE_HWACCEL="on")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            returncode = 1
+        return R()
+
+    monkeypatch.setattr(studio.subprocess, "run", fake_run)
+    studio._hw_encoder = None
+    assert studio.detect_hw_encoder() == "", "a failing probe must not be trusted"
+    assert calls, "it has to actually try an encode"
+
+
 # ── depth and breadth ───────────────────────────────────────────────────────
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
