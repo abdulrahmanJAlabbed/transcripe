@@ -184,9 +184,12 @@ function Studio() {
     const k = kindOf(p.ext);
     if (k !== "other") {
       const opts = TARGETS[k];
-      setTarget((t) =>
-        [...opts.main, ...(opts.audio ?? [])].includes(t) ? t : opts.main[0]
+      const from = p.ext.replace(/^jpeg$/, "jpg");
+      const choices = [...opts.main, ...(opts.audio ?? [])].filter(
+        (fmt) => fmt !== from
       );
+      // Default to something that actually changes the file.
+      setTarget((t) => (choices.includes(t) ? t : choices[0] ?? opts.main[0]));
     }
     reset();
   };
@@ -280,7 +283,10 @@ function Studio() {
           },
           controller.signal
         );
-      } else if (TEXT_TARGETS.includes(target)) {
+      } else if (
+        TEXT_TARGETS.includes(target) &&
+        (kind === "audio" || kind === "video")
+      ) {
         setStatus(`${picked!.name} → .${target}`);
         out = await transcribeFile(
           {
@@ -361,12 +367,16 @@ function Studio() {
     mode === "url"
       ? URL_TARGETS
       : kind && kind !== "other"
-      ? [...TARGETS[kind].main, ...(TARGETS[kind].audio ?? [])]
+      ? [...TARGETS[kind].main, ...(TARGETS[kind].audio ?? [])].filter(
+          (t) => t !== picked?.ext.replace(/^jpeg$/, "jpg")
+        )
       : [];
   const textTargets =
     canTranscribe && mode === "file" && kind && kind !== "other"
       ? TARGETS[kind].text ?? []
       : [];
+  // Converting a file to the format it already is does nothing useful.
+  const sourceExt = picked ? picked.ext.replace(/^jpeg$/, "jpg") : "";
 
   if (!fontsLoaded) {
     return (
@@ -677,7 +687,8 @@ function Studio() {
                     ? `Fetch & convert to .${target}`
                     : kind === "other"
                     ? "Not supported on mobile"
-                    : TEXT_TARGETS.includes(target)
+                    : TEXT_TARGETS.includes(target) &&
+                      (kind === "audio" || kind === "video")
                     ? `Transcribe to .${target}`
                     : `Convert to .${target}`
                 }

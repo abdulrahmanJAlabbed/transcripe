@@ -245,8 +245,13 @@ export function App() {
   const platform = useMemo(() => detectPlatform(mediaUrl), [mediaUrl]);
   // Assume yes until an engine tells us otherwise, so the chips don't flicker.
   const canTranscribe = features.transcribe !== false;
-
   const kind: Kind | null = entries.length ? kindOf(entries[0].ext) : null;
+  // Converting a file to the format it already is does nothing useful.
+  const sourceExt = entries.length ? entries[0].ext.replace(/^jpeg$/, "jpg") : "";
+  /* .srt/.txt mean "transcribe this" only when the input is media; from a
+     subtitle file they're an ordinary format change. */
+  const isTranscribing =
+    TEXT_TARGETS.includes(target) && (kind === "audio" || kind === "video");
   const cliService: Service | null = useMemo(() => {
     if (kind !== "other" || !entries.length) return null;
     const ext = entries[0].ext;
@@ -328,9 +333,12 @@ export function App() {
       const k = kindOf(merged[0].ext);
       if (k !== "other") {
         const opts = TARGETS[k];
-        setTarget((t) =>
-          [...opts.main, ...(opts.audio ?? [])].includes(t) ? t : opts.main[0]
+        const from = merged[0].ext.replace(/^jpeg$/, "jpg");
+        const choices = [...opts.main, ...(opts.audio ?? [])].filter(
+          (fmt) => fmt !== from
         );
+        // Default to something that actually changes the file.
+        setTarget((t) => (choices.includes(t) ? t : choices[0] ?? opts.main[0]));
       }
       return merged;
     });
@@ -556,7 +564,7 @@ export function App() {
      itself single-file. Keep a few in flight and report progress by count;
      transcription stays one at a time, since Whisper is serialized anyway. */
   const runFileConvert = async (signal: AbortSignal): Promise<OutFile[]> => {
-    const transcribing = TEXT_TARGETS.includes(target);
+    const transcribing = isTranscribing;
     const total = entries.length;
 
     if (transcribing || total === 1) {
@@ -718,7 +726,9 @@ export function App() {
       <div className="opt">
         <span className="opt-label">Convert to</span>
         <div className="chips">
-          {opts.main.map((fmt) => (
+          {opts.main
+            .filter((fmt) => fmt !== sourceExt)
+            .map((fmt) => (
             <button
               key={fmt}
               className={`chip ${target === fmt ? "active" : ""}`}
@@ -1146,7 +1156,7 @@ export function App() {
                   ? `Fetch & convert${target ? ` to .${target}` : ""}`
                   : kind === "other"
                   ? "Use the CLI for this format"
-                  : TEXT_TARGETS.includes(target)
+                  : isTranscribing
                   ? `Transcribe to .${target}`
                   : `Convert${target ? ` to .${target}` : ""}`}
                 <ArrowRight className="arrow" size={17} />
