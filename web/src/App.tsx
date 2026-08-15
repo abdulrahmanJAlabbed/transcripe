@@ -202,6 +202,7 @@ export function App() {
   const [mediaUrl, setMediaUrl] = useState("");
   const [target, setTarget] = useState("");
   const [useCookies, setUseCookies] = useState(true);
+  const [linkQuality, setLinkQuality] = useState<"best" | "compatible">("best");
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [statusLabel, setStatusLabel] = useState("");
@@ -468,7 +469,8 @@ export function App() {
       body: JSON.stringify({
         url: mediaUrl.trim(),
         format: target || "mp4",
-        useBrowserCookies: useCookies
+        useBrowserCookies: useCookies,
+        quality: linkQuality
       }),
       signal
     });
@@ -1001,6 +1003,28 @@ export function App() {
                 {mediaUrl.trim() && (
                   <>
                     {targetChips()}
+                    {!TEXT_TARGETS.includes(target) && target !== "mp3" && (
+                      <div className="opt">
+                        <span className="opt-label">Quality</span>
+                        <div className="chips">
+                          <button
+                            className={`chip ${linkQuality === "best" ? "active" : ""}`}
+                            onClick={() => setLinkQuality("best")}
+                            title="Highest resolution available, up to 4K"
+                          >
+                            best available
+                          </button>
+                          <button
+                            className={`chip ${linkQuality === "compatible" ? "active" : ""}`}
+                            onClick={() => setLinkQuality("compatible")}
+                            title="H.264 for older players — YouTube caps this at 1080p"
+                          >
+                            most compatible
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <label className="check-row">
                       <input
                         type="checkbox"

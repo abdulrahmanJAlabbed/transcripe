@@ -2,3 +2,4 @@
 -r requirements.txt
 pytest>=8.0.0
 httpx>=0.27.0          # drives the studio API tests through FastAPI's TestClient
+piexif>=1.1.3        # writes the EXIF fixtures the image-fidelity tests need

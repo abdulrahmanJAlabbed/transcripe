@@ -132,6 +132,9 @@ class UrlConvertRequest(BaseModel):
     url: str
     format: str = "mp3"
     useBrowserCookies: bool = True
+    # "best" takes the highest resolution available; "compatible" sticks to
+    # H.264, which older players need but which YouTube caps at 1080p.
+    quality: str = "best"
     # "stream" hands the bytes back on this request (browser default).
     # "link" parks the result and returns a one-shot URL, so native clients
     # can stream it straight to disk instead of buffering it in memory.
@@ -414,6 +417,36 @@ def can_remux(input_path: str, target_fmt: str, want_audio_only: bool) -> bool:
                 return False
     # A silent file in an audio container would produce nothing at all.
     return seen_audio or not want_audio_only
+
+
+AUDIO_TARGETS = {"mp3", "m4a", "wav", "aac", "opus", "flac", "ogg"}
+
+
+def ytdlp_quality_args(target_fmt: str, quality: str = "best") -> list:
+    """Which stream yt-dlp should take, and how well to keep it.
+
+    The old selector demanded avc1, which on YouTube means H.264 — and H.264
+    tops out at 1080p there. Measured on a 4K source it fetched 1920x1080 when
+    3840x2160 AV1 was sitting right next to it. Quality is the point of this
+    tool, so sort by resolution first and merely *prefer* the widely-playable
+    codecs, rather than refusing everything else.
+
+    quality="compatible" restores the old behaviour for anyone feeding an old
+    TV or editor that only speaks H.264.
+    """
+    if target_fmt in AUDIO_TARGETS:
+        # yt-dlp's default --audio-quality is 5: roughly 130 kbps VBR for mp3.
+        # 0 is the best the encoder offers.
+        return ["-f", "ba/b", "-S", "abr,acodec", "--audio-quality", "0"]
+
+    if quality == "compatible":
+        return ["-f", ("bv*[vcodec^=avc1]+ba[ext=m4a]/b[vcodec^=avc1]/"
+                       "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b"),
+                "-S", "res,fps"]
+
+    # Highest resolution wins; among equals prefer AV1 then H.264 (both sit in
+    # an mp4 happily) over VP9, and the richer audio track.
+    return ["-f", "bv*+ba/b", "-S", "res,fps,hdr:12,vcodec:av01:avc1,channels,acodec"]
 
 
 def ffmpeg_reason(stderr: str) -> str:
@@ -715,18 +748,19 @@ async def convert_url(req: UrlConvertRequest, request: Request):
 
             yt_bin = tool_path("yt-dlp")
             
-            if target_fmt in ["mp3", "m4a", "wav", "aac", "opus", "flac"]:
-                yt_opts = [yt_bin, "-x", "--audio-format", target_fmt, "-o", out_template] + common_flags + [url]
+            quality_args = ytdlp_quality_args(target_fmt, req.quality)
+            if target_fmt in AUDIO_TARGETS:
+                yt_opts = ([yt_bin, "-x", "--audio-format", target_fmt, "-o", out_template]
+                           + quality_args + common_flags + [url])
             else:
-                # Prefer H.264 (avc1) over AV1/VP9 — AV1 won't play in most players
-                # (default OS players, older browsers, many phones show black video).
-                # Fall back through mp4, then re-mux anything to mp4 for compatibility.
-                h264_fmt = ("bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/"
-                            "best[vcodec^=avc1]/"
-                            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-                            "best[ext=mp4]/best")
-                yt_opts = [yt_bin, "-f", h264_fmt, "--merge-output-format", "mp4",
-                           "-o", out_template] + common_flags + [url]
+                # --remux-video rewraps into the asked-for container when the
+                # codec allows it, which is lossless; it only re-encodes when
+                # there's no other way.
+                yt_opts = ([yt_bin, "-o", out_template]
+                           + quality_args
+                           + ["--merge-output-format", target_fmt,
+                              "--remux-video", f"{target_fmt}/mkv"]
+                           + common_flags + [url])
 
             res = subprocess.run(yt_opts, capture_output=True, text=True, timeout=JOB_TIMEOUT)
             picked = pick_download(temp_dir)

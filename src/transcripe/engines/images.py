@@ -64,7 +64,7 @@ def _open_image(input_path: Path):
             return Image.open(io.BytesIO(png_bytes))
         return base
     try:
-        return Image.open(input_path)
+        img = Image.open(input_path)
     except Exception as e:
         ext = input_path.suffix.lower()
         if ext in (".heic", ".avif"):
@@ -72,10 +72,64 @@ def _open_image(input_path: Path):
                 f"Cannot open {ext} — install the HEIF plugin: pip install pillow-heif") from e
         raise
 
+    # Phone cameras store the sensor's own orientation and a tag saying how to
+    # turn it. Without this a portrait photo converts to a sideways one — and
+    # browsers, which honour the tag, would disagree with us about the same file.
+    try:
+        from PIL import ImageOps
+        img = ImageOps.exif_transpose(img) or img
+    except Exception:
+        pass
+    return img
+
 
 def get_reader():
     """Backwards-compatible EasyOCR reader accessor (prefer engines.ocr.ocr_image)."""
     return ocr._get_easy(("en",))
+
+LOSSLESS_SOURCES = {".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def _save_options(img, target_format: str, source: Path | None = None) -> dict:
+    """Encoder settings that keep the picture.
+
+    Pillow defaults to JPEG quality 75 and WebP 80 — fine for a thumbnail,
+    visibly soft for someone converting a photo they care about. Quality is
+    the point of this tool, so ask for near-transparent settings and keep the
+    colour profile that came in. Override the target with TRANSCRIPE_IMAGE_Q.
+    """
+    import os
+
+    quality = int(os.environ.get("TRANSCRIPE_IMAGE_Q", "95"))
+    opts: dict = {}
+
+    # A colour profile is part of the picture: drop it and the colours shift.
+    icc = img.info.get("icc_profile")
+    if icc:
+        opts["icc_profile"] = icc
+
+    fmt = target_format.lower()
+    if fmt in ("jpg", "jpeg"):
+        opts.update(quality=quality, optimize=True, progressive=True,
+                    # 4:4:4 — no chroma subsampling, so fine coloured detail
+                    # (text, UI screenshots) survives.
+                    subsampling=0)
+        exif = img.info.get("exif")
+        if exif:
+            opts["exif"] = exif
+    elif fmt == "webp":
+        # Re-encoding something lossless into lossy WebP throws away detail for
+        # no reason; keep it lossless when it arrived that way.
+        if source and source.suffix.lower() in LOSSLESS_SOURCES:
+            opts.update(lossless=True, quality=100, method=6)
+        else:
+            opts.update(quality=quality, method=6)
+    elif fmt == "png":
+        opts.update(optimize=True, compress_level=9)
+    elif fmt in ("tif", "tiff"):
+        opts.update(compression="tiff_lzw")
+    return opts
+
 
 def convert_image(input_path: Path, target_format: str, console: Console,
                   output_path: Path | None = None, langs: list[str] | None = None):
@@ -103,7 +157,7 @@ def convert_image(input_path: Path, target_format: str, console: Console,
 
             out_path = output_path or input_path.with_suffix(f".{target_format}")
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            img.save(out_path)
+            img.save(out_path, **_save_options(img, target_format, input_path))
             console.print(f"[bold green]✓ Converted! Saved to {out_path.name}[/bold green]")
     else:
         raise ValueError(f"Cannot convert image to {target_format}")

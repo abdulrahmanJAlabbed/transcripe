@@ -74,7 +74,14 @@ async function pull(job: Delivered): Promise<File> {
 }
 
 export async function convertUrl(
-  input: { url: string; format: string; useBrowserCookies: boolean },
+  input: {
+    url: string;
+    format: string;
+    useBrowserCookies: boolean;
+    /** "best" takes the highest resolution; "compatible" sticks to H.264,
+     *  which older players need but YouTube caps at 1080p. */
+    quality?: "best" | "compatible";
+  },
   signal?: AbortSignal
 ): Promise<File> {
   const res = await fetch(`${API}/api/convert/url`, {

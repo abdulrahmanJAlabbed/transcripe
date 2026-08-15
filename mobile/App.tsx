@@ -62,6 +62,9 @@ type Mode = "file" | "url";
 type Phase = "idle" | "working" | "done";
 type Picked = { uri: string; name: string; size?: number; mimeType?: string; ext: string };
 
+/* Resolution choice only means something for video targets. */
+const URL_AUDIO_ONLY = ["mp3", "m4a", "wav", "flac"];
+
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -92,6 +95,7 @@ function Studio() {
   const [url, setUrl] = useState("");
   const [target, setTarget] = useState("mp4");
   const [useCookies, setUseCookies] = useState(true);
+  const [linkQuality, setLinkQuality] = useState<"best" | "compatible">("best");
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [status, setStatus] = useState("");
@@ -268,7 +272,12 @@ function Studio() {
       if (mode === "url") {
         setStatus(`Fetching ${platform ?? "link"} → .${target}`);
         out = await convertUrl(
-          { url: url.trim(), format: target, useBrowserCookies: useCookies },
+          {
+            url: url.trim(),
+            format: target,
+            useBrowserCookies: useCookies,
+            quality: linkQuality
+          },
           controller.signal
         );
       } else if (TEXT_TARGETS.includes(target)) {
@@ -508,6 +517,24 @@ function Studio() {
                     1,000+ sites — reels without watermarks, shorts, clips, tracks.
                   </Body>
                 )}
+                {!URL_AUDIO_ONLY.includes(target) && (
+                  <View style={{ gap: 9 }}>
+                    <Label>quality</Label>
+                    <View style={st.chips}>
+                      <Chip
+                        label="best available"
+                        active={linkQuality === "best"}
+                        onPress={() => setLinkQuality("best")}
+                      />
+                      <Chip
+                        label="most compatible"
+                        active={linkQuality === "compatible"}
+                        onPress={() => setLinkQuality("compatible")}
+                      />
+                    </View>
+                  </View>
+                )}
+
                 <Tap
                   onPress={() => setUseCookies((v) => !v)}
                   style={st.checkRow}

@@ -270,6 +270,82 @@ def test_absurdly_long_filenames_are_trimmed(open_studio):
     assert "empty" in res.json()["detail"]
 
 
+# ── download quality ────────────────────────────────────────────────────────
+
+def test_best_quality_does_not_restrict_the_codec(open_studio):
+    """Demanding avc1 means H.264, and YouTube caps H.264 at 1080p — measured
+    on a 4K source it fetched 1920x1080 while 3840x2160 AV1 sat next to it."""
+    args = " ".join(open_studio.ytdlp_quality_args("mp4", "best"))
+    assert "vcodec^=avc1" not in args, "hard codec filter is what caps the resolution"
+    assert "res" in args, "resolution has to lead the sort"
+
+
+def test_compatible_mode_still_available_for_old_players(open_studio):
+    args = " ".join(open_studio.ytdlp_quality_args("mp4", "compatible"))
+    assert "avc1" in args
+
+
+def test_audio_downloads_ask_for_the_best_encode(open_studio):
+    """yt-dlp defaults to --audio-quality 5, about 130 kbps for mp3."""
+    args = open_studio.ytdlp_quality_args("mp3", "best")
+    assert "--audio-quality" in args
+    assert args[args.index("--audio-quality") + 1] == "0"
+
+
+# ── image fidelity ──────────────────────────────────────────────────────────
+
+def test_exif_rotation_is_applied(tmp_path):
+    """A phone photo tags its orientation instead of rotating the pixels.
+    Ignoring the tag hands the user a sideways picture — and disagrees with
+    every browser, which honours it."""
+    PIL = pytest.importorskip("PIL.Image", reason="Pillow not installed")
+    piexif = pytest.importorskip("piexif", reason="piexif not installed")
+    from PIL import ImageDraw
+
+    from transcripe.engines.images import _open_image
+
+    src = tmp_path / "portrait.jpg"
+    img = PIL.new("RGB", (600, 400), (240, 240, 240))
+    ImageDraw.Draw(img).rectangle([0, 0, 600, 60], fill=(200, 40, 40))
+    img.save(src, exif=piexif.dump({"0th": {piexif.ImageIFD.Orientation: 6}}))
+
+    opened = _open_image(src)
+    assert opened.size == (400, 600), "orientation tag was ignored"
+
+
+def test_jpeg_is_saved_at_quality_not_pillow_default(tmp_path):
+    """Pillow defaults to quality 75, which is visibly soft. This tool is for
+    people who care about the file they get back."""
+    PIL = pytest.importorskip("PIL.Image", reason="Pillow not installed")
+    from transcripe.engines.images import _save_options
+
+    img = PIL.new("RGB", (64, 64), (10, 20, 30))
+    opts = _save_options(img, "jpg", tmp_path / "x.png")
+    assert opts["quality"] >= 90
+    assert opts["subsampling"] == 0, "chroma subsampling blurs coloured detail"
+
+
+def test_lossless_source_stays_lossless_into_webp(tmp_path):
+    PIL = pytest.importorskip("PIL.Image", reason="Pillow not installed")
+    from transcripe.engines.images import _save_options
+
+    img = PIL.new("RGB", (32, 32), (1, 2, 3))
+    from_png = _save_options(img, "webp", tmp_path / "a.png")
+    from_jpg = _save_options(img, "webp", tmp_path / "a.jpg")
+    assert from_png.get("lossless") is True
+    assert from_jpg.get("lossless") is not True
+
+
+def test_colour_profile_survives_conversion(tmp_path):
+    """Dropping the ICC profile shifts every colour in the picture."""
+    PIL = pytest.importorskip("PIL.Image", reason="Pillow not installed")
+    from transcripe.engines.images import _save_options
+
+    img = PIL.new("RGB", (8, 8))
+    img.info["icc_profile"] = b"fake-profile"
+    assert _save_options(img, "jpg", None)["icc_profile"] == b"fake-profile"
+
+
 # ── remux vs re-encode ──────────────────────────────────────────────────────
 
 @pytest.fixture

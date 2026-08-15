@@ -27,6 +27,21 @@ export function canConvertLocally(sourceExt: string, target: string): boolean {
   return IMAGE_IN.includes(sourceExt.toLowerCase()) && target in IMAGE_OUT;
 }
 
+/* Sources that arrived without generation loss. Re-compressing one of these
+   into a lossy target would throw away detail for nothing. */
+const LOSSLESS_SOURCES = ["png", "bmp", "gif", "webp", "tif", "tiff"];
+
+/** Encoder quality, matched to the engine's policy so both paths produce the
+ *  same picture. Measured in Chrome: WebP at 1.0 is bit-exact (zero pixel
+ *  error), 0.95 is not; PNG is always lossless. */
+function encodeQuality(sourceExt: string, target: string): number {
+  if (target === "png") return 1;
+  if (target === "webp" && LOSSLESS_SOURCES.includes(sourceExt.toLowerCase())) {
+    return 1; // lossless WebP
+  }
+  return 0.95;
+}
+
 /** Decode → repaint → re-encode, all in the page. Throws if the browser can't
  *  read the file, which is the caller's cue to fall back to the engine. */
 export async function convertImageLocally(
@@ -36,6 +51,8 @@ export async function convertImageLocally(
   const type = IMAGE_OUT[target];
   if (!type) throw new Error(`no local encoder for .${target}`);
 
+  // createImageBitmap honours the EXIF orientation tag, so a portrait phone
+  // photo comes out upright — same as the engine does with exif_transpose.
   const bitmap = await createImageBitmap(file);
   try {
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
@@ -49,7 +66,8 @@ export async function convertImageLocally(
     }
     ctx.drawImage(bitmap, 0, 0);
 
-    const blob = await canvas.convertToBlob({ type, quality: 0.92 });
+    const quality = encodeQuality(extensionOf(file.name), target);
+    const blob = await canvas.convertToBlob({ type, quality });
     if (!blob || blob.size === 0) throw new Error("encoder produced nothing");
     return {
       blob,
@@ -58,4 +76,9 @@ export async function convertImageLocally(
   } finally {
     bitmap.close();
   }
+}
+
+function extensionOf(name: string): string {
+  const parts = name.split("?")[0].split(".");
+  return parts.length > 1 ? parts.pop()!.toLowerCase() : "";
 }
