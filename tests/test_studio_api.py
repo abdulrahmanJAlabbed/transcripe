@@ -270,6 +270,89 @@ def test_absurdly_long_filenames_are_trimmed(open_studio):
     assert "empty" in res.json()["detail"]
 
 
+# ── depth and breadth ───────────────────────────────────────────────────────
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
+def test_wav_keeps_the_source_bit_depth(open_studio, tmp_path):
+    """A 24-bit master converted to WAV came back 16-bit. WAV has no
+    compression to hide behind — writing pcm_s16le throws the depth away."""
+    import subprocess
+
+    from transcripe.engines.audio_video import pcm_codec_for
+
+    src = tmp_path / "master.flac"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+         "sine=frequency=440:duration=1:sample_rate=96000",
+         "-c:a", "flac", "-sample_fmt", "s32", str(src)], check=True, timeout=120)
+
+    assert pcm_codec_for(src) in ("pcm_s24le", "pcm_s32le", "pcm_f32le")
+
+    with TestClient(open_studio.app) as client:
+        res = client.post(
+            "/api/convert/file",
+            files={"file": ("master.flac", src.read_bytes(), "audio/flac")},
+            data={"targetFormat": "wav"},
+        )
+    assert res.status_code == 200
+    out = tmp_path / "out.wav"
+    out.write_bytes(res.content)
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=sample_fmt",
+         "-of", "csv=p=0", str(out)], capture_output=True, text=True, timeout=60).stdout
+    assert "s16" not in probe, f"depth was flattened: {probe.strip()}"
+
+
+def test_subtitles_convert_without_the_cli(open_studio, tmp_path):
+    """The subtitle engine was always here; the studio just had no route to
+    it, so uploading an .srt got you a 'use the CLI' shrug."""
+    src = tmp_path / "cues.srt"
+    src.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello\n\n")
+
+    with TestClient(open_studio.app) as client:
+        res = client.post(
+            "/api/convert/file",
+            files={"file": ("cues.srt", src.read_bytes(), "text/plain")},
+            data={"targetFormat": "vtt"},
+        )
+    assert res.status_code == 200, res.text
+    assert res.content.startswith(b"WEBVTT")
+
+
+def test_tabular_data_converts_without_the_cli(open_studio, tmp_path):
+    pytest.importorskip("pandas", reason="data extra not installed")
+    src = tmp_path / "rows.csv"
+    src.write_text("name,score\nRahman,91\n")
+
+    with TestClient(open_studio.app) as client:
+        res = client.post(
+            "/api/convert/file",
+            files={"file": ("rows.csv", src.read_bytes(), "text/csv")},
+            data={"targetFormat": "json"},
+        )
+    assert res.status_code == 200, res.text
+    assert b"Rahman" in res.content
+
+
+def test_modern_image_targets_are_offered(open_studio, tmp_path):
+    """AVIF carries the same picture in less space than WebP; not offering it
+    means handing people a bigger file than they need."""
+    PIL = pytest.importorskip("PIL.Image", reason="Pillow not installed")
+    pytest.importorskip("pillow_heif", reason="pillow-heif not installed")
+    src = tmp_path / "shot.png"
+    PIL.new("RGB", (64, 48), (124, 92, 255)).save(src)
+
+    with TestClient(open_studio.app) as client:
+        for target in ("avif", "gif", "ico"):
+            res = client.post(
+                "/api/convert/file",
+                files={"file": ("shot.png", src.read_bytes(), "image/png")},
+                data={"targetFormat": target},
+            )
+            assert res.status_code == 200, f"{target}: {res.text[:120]}"
+            assert len(res.content) > 50
+
+
 # ── download quality ────────────────────────────────────────────────────────
 
 def test_best_quality_does_not_restrict_the_codec(open_studio):

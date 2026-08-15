@@ -53,6 +53,44 @@ def get_model(console: Console):
     return _MODEL, device, compute
 
 
+def pcm_codec_for(input_path: Path) -> str:
+    """The PCM flavour that keeps this source's depth.
+
+    WAV has no compression to hide behind: writing pcm_s16le is a decision to
+    throw away everything above 16 bits. A 24-bit master converted to WAV came
+    out 16-bit, silently, which is the one thing a lossless target must not do.
+    """
+    import subprocess
+
+    probe = shutil.which("ffprobe")
+    if not probe:
+        return "pcm_s16le"
+    try:
+        res = subprocess.run(
+            [probe, "-v", "error", "-select_streams", "a:0", "-show_entries",
+             "stream=sample_fmt,bits_per_raw_sample", "-of", "csv=p=0", str(input_path)],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return "pcm_s16le"
+
+    parts = [p.strip() for p in res.stdout.strip().split(",") if p.strip()]
+    sample_fmt = parts[0] if parts else ""
+    bits = 0
+    for p in parts[1:]:
+        if p.isdigit():
+            bits = int(p)
+
+    if bits >= 32 or sample_fmt.startswith(("flt", "dbl")):
+        return "pcm_f32le"
+    if bits >= 24:
+        return "pcm_s24le"
+    if sample_fmt.startswith("s32"):
+        return "pcm_s32le"
+    if sample_fmt.startswith("u8"):
+        return "pcm_u8"
+    return "pcm_s16le"
+
+
 def fmt_time(s: float) -> str:
     ms = int((s % 1) * 1000)
     return f"{int(s)//3600:02d}:{(int(s)//60)%60:02d}:{int(s)%60:02d},{ms:03d}"
@@ -140,7 +178,8 @@ def convert_media(input_path: Path, target_format: str, console: Console, output
         elif target_format == "aac":
             cmd += ["-codec:a", "aac", "-b:a", "192k"]
         elif target_format == "wav":
-            cmd += ["-codec:a", "pcm_s16le"]
+            # Match the source's depth rather than flattening it to 16-bit.
+            cmd += ["-codec:a", pcm_codec_for(input_path)]
         # m4a and wma: let ffmpeg auto-select codec
 
     elif target_format in video_targets:

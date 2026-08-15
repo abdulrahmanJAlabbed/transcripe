@@ -124,6 +124,15 @@ def _save_options(img, target_format: str, source: Path | None = None) -> dict:
             opts.update(lossless=True, quality=100, method=6)
         else:
             opts.update(quality=quality, method=6)
+    elif fmt == "avif":
+        # AVIF beats WebP at the same quality; keep a lossless source lossless.
+        if source and source.suffix.lower() in LOSSLESS_SOURCES:
+            opts.update(quality=100, lossless=True)
+        else:
+            opts.update(quality=quality)
+    elif fmt == "ico":
+        # Icons are a set of sizes, not one image; give the usual ones.
+        opts["sizes"] = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
     elif fmt == "png":
         opts.update(optimize=True, compress_level=9)
     elif fmt in ("tif", "tiff"):
@@ -147,7 +156,7 @@ def convert_image(input_path: Path, target_format: str, console: Console,
 
             console.print(f"[bold green]✓ OCR completed! Saved to {out_path.name}[/bold green] [dim]({len(text)} chars)[/dim]")
 
-    elif target_format in ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "gif", "ico"]:
+    elif target_format in ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "gif", "ico", "avif"]:
         # Format conversion
         with console.status(f"[bold cyan]Converting image to {target_format.upper()}...[/bold cyan]"):
             img = _open_image(input_path)

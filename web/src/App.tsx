@@ -33,16 +33,20 @@ import { applyTheme, currentTheme, watchSystemTheme, type Theme } from "./theme"
 
 /* ── Format knowledge ────────────────────────────────────────────────────── */
 
-const AUDIO_EXTS = ["mp3", "wav", "m4a", "flac", "aac", "ogg", "opus", "wma"];
-const VIDEO_EXTS = ["mp4", "mkv", "mov", "webm", "avi", "3gp", "flv", "wmv"];
-const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "heic", "heif", "avif"];
+const AUDIO_EXTS = ["mp3", "wav", "m4a", "flac", "aac", "ogg", "opus", "wma", "aiff", "alac"];
+const VIDEO_EXTS = ["mp4", "mkv", "mov", "webm", "avi", "3gp", "flv", "wmv", "m4v", "mpg", "mpeg", "ts"];
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "tif", "heic", "heif", "avif", "ico"];
+const SUBTITLE_EXTS = ["srt", "vtt", "ass", "ssa"];
+const DATA_EXTS = ["csv", "json", "yaml", "yml", "xml", "xlsx", "tsv", "parquet", "toml"];
 
-type Kind = "audio" | "video" | "image" | "other";
+type Kind = "audio" | "video" | "image" | "subtitle" | "data" | "other";
 
 function kindOf(ext: string): Kind {
   if (AUDIO_EXTS.includes(ext)) return "audio";
   if (VIDEO_EXTS.includes(ext)) return "video";
   if (IMAGE_EXTS.includes(ext)) return "image";
+  if (SUBTITLE_EXTS.includes(ext)) return "subtitle";
+  if (DATA_EXTS.includes(ext)) return "data";
   return "other";
 }
 
@@ -52,13 +56,15 @@ const TARGETS: Record<
   Exclude<Kind, "other">,
   { main: string[]; audio?: string[]; text?: string[] }
 > = {
-  audio: { main: ["mp3", "wav", "m4a", "flac", "ogg", "opus"], text: ["srt", "txt"] },
+  audio: { main: ["mp3", "wav", "m4a", "flac", "ogg", "opus", "aac"], text: ["srt", "txt"] },
   video: {
-    main: ["mp4", "webm", "mov", "mkv"],
-    audio: ["mp3", "wav", "m4a"],
+    main: ["mp4", "webm", "mov", "mkv", "avi"],
+    audio: ["mp3", "wav", "m4a", "flac"],
     text: ["srt", "txt"]
   },
-  image: { main: ["png", "jpg", "webp", "bmp", "tiff"] }
+  image: { main: ["png", "jpg", "webp", "avif", "bmp", "tiff", "gif", "ico"] },
+  subtitle: { main: ["srt", "vtt", "ass", "txt"] },
+  data: { main: ["csv", "json", "yaml", "xlsx", "xml"] }
 };
 
 const TEXT_TARGETS = ["srt", "txt"];

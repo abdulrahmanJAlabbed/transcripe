@@ -464,6 +464,18 @@ def ytdlp_quality_args(target_fmt: str, quality: str = "best") -> list:
     return ["-f", "bv*+ba/b", "-S", "res,fps,hdr:12,vcodec:av01:avc1,channels,acodec"]
 
 
+def pcm_for_source(path: str) -> str:
+    """WAV depth that matches the input — see engines.audio_video."""
+    from pathlib import Path
+
+    from transcripe.engines.audio_video import pcm_codec_for
+
+    try:
+        return pcm_codec_for(Path(path))
+    except Exception:
+        return "pcm_s16le"
+
+
 def ffmpeg_reason(stderr: str) -> str:
     """The line that actually explains the failure.
 
@@ -880,7 +892,7 @@ async def convert_file(
                 "ogg": ["-codec:a", "libvorbis", "-q:a", "6"],
                 "opus": ["-codec:a", "libopus", "-b:a", "128k"],
                 "aac": ["-codec:a", "aac", "-b:a", "192k"],
-                "wav": ["-codec:a", "pcm_s16le"],
+                "wav": ["-codec:a", pcm_for_source(input_path)],
             }.get(fmt, [])
         elif fmt == "mp4" or fmt in ("mov", "mkv", "avi"):
             base += ["-codec:v", "libx264", "-preset", X264_PRESET, "-crf", "23",
@@ -895,8 +907,16 @@ async def convert_file(
                      "-pix_fmt", "yuv420p", "-codec:a", "libopus"]
         return base + [output_path]
 
-    IMAGE_FMTS = {"png", "jpg", "jpeg", "webp", "bmp", "tiff", "gif", "ico"}
+    IMAGE_FMTS = {"png", "jpg", "jpeg", "webp", "bmp", "tiff", "gif", "ico", "avif"}
+    SUBTITLE_FMTS = {"srt", "vtt", "ass", "ssa"}
+    DATA_FMTS = {"csv", "json", "yaml", "yml", "xml", "xlsx", "tsv", "parquet", "toml"}
     src_ext = os.path.splitext(safe_in)[1].lower().lstrip(".")
+
+    # Subtitles and tabular data never needed ffmpeg; the engines were already
+    # here, the studio just had no route to them, so uploading an .srt got you
+    # a "use the CLI" shrug.
+    is_subtitle_work = src_ext in SUBTITLE_FMTS and target_fmt in SUBTITLE_FMTS | {"txt"}
+    is_data_work = src_ext in DATA_FMTS and target_fmt in DATA_FMTS
 
     is_image_work = (
         target_fmt in IMAGE_FMTS or src_ext in IMAGE_FMTS | {"heic", "heif", "avif"})
@@ -906,6 +926,23 @@ async def convert_file(
                             detail=f"Can't turn an image into .{target_fmt}.")
 
     def encode():
+        if is_subtitle_work or is_data_work:
+            import io
+            from pathlib import Path
+
+            from rich.console import Console
+
+            quiet = Console(file=io.StringIO())
+            if is_subtitle_work:
+                from transcripe.engines.subtitles import convert_subtitle
+                convert_subtitle(Path(input_path), target_fmt, quiet,
+                                 output_path=Path(output_path))
+            else:
+                from transcripe.engines.data import dataframe_convert
+                dataframe_convert(Path(input_path), target_fmt, quiet,
+                                  output_path=Path(output_path))
+            return None
+
         # Images go through Pillow, not ffmpeg: ffmpeg can't read HEIC/AVIF at
         # all, and those are exactly what phones hand over.
         if is_image_work:
