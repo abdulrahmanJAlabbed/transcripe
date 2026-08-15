@@ -1468,33 +1468,6 @@ a {
 
 /* ── App layer: status, veil, toast, offline ─────────────────────────────── */
 
-.engine-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  letter-spacing: 0.06em;
-  color: var(--ink-3);
-  user-select: none;
-}
-
-.engine-status i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-}
-
-.engine-status.on i {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px rgba(44, 110, 73, 0.14);
-}
-
-.engine-status.off i {
-  background: var(--err);
-  box-shadow: 0 0 0 3px var(--err-soft);
-}
-
 .offline-chip {
   display: flex;
   align-items: center;
@@ -1721,11 +1694,6 @@ a {
   }
   .pip-chip {
     display: none;
-  }
-  /* dot only — the label is noise at this size */
-  .engine-status {
-    font-size: 0;
-    gap: 0;
   }
   .card {
     padding: 16px;

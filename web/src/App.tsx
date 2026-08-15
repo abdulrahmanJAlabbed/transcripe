@@ -875,19 +875,6 @@ export function App() {
           >
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
-          {engineOnline !== null && (
-            <span
-              className={`engine-status ${engineOnline ? "on" : "off"}`}
-              title={
-                engineOnline
-                  ? "Local engine is running"
-                  : "Local engine is offline"
-              }
-            >
-              <i />
-              engine {engineOnline ? "on" : "off"}
-            </span>
-          )}
           <a className="nav-link" href="#engines">
             Engines
           </a>
