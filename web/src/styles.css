@@ -2126,28 +2126,56 @@ body::after {
   .engine-grid .engine-cell { opacity: 1; transform: none; }
 }
 
-/* ── Orb ─────────────────────────────────────────────────────────────────────
-   Sits between the lede and the converter, where the old hero visual was. It
-   keeps its own pointer events so it distorts and spins under the cursor, and
-   it doesn't overlap the card, so nothing meant for the converter lands here. */
-.orb-stage {
+/* ── Orb: the hero's backdrop ────────────────────────────────────────────────
+   Sits behind the headline and the converter, centred on the section. It keeps
+   its pointer events so it reacts where it's exposed, but everything in the
+   hero is stacked above it, so clicks and hovers meant for the card get there. */
+.hero {
   position: relative;
-  width: min(400px, 74vw);
-  height: min(400px, 74vw);
-  margin: 4px auto 8px;
+  isolation: isolate;
 }
 
-/* In light mode the shader fills its square with the background colour it was
-   given, which shows as a seam against the page's gradient. Fade the canvas
-   out well before its edge so only the orb itself is ever visible. */
-.orb-stage canvas {
-  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 52%, transparent 70%);
-  mask-image: radial-gradient(circle at 50% 50%, #000 52%, transparent 70%);
+.hero > *:not(.hero-orb) {
+  position: relative;
+  z-index: 1;
+}
+
+.hero-orb {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(980px, 128vw);
+  height: min(980px, 128vw);
+  z-index: 0;
+  opacity: 0.6;
+  /* The shader fills its square with the background colour it was handed,
+     which would show as a seam; fade it out well inside its own edge. */
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 46%, transparent 68%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 46%, transparent 68%);
+}
+
+/* Match how the palette is scoped: an unset data-theme means dark here, so a
+   bare :not([data-theme="dark"]) would dim the default view too. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .hero-orb {
+    opacity: 0.45;
+  }
+}
+
+:root[data-theme="light"] .hero-orb {
+  opacity: 0.45;
 }
 
 @media (max-width: 640px) {
-  .orb-stage {
-    width: min(280px, 72vw);
-    height: min(280px, 72vw);
+  .hero-orb {
+    width: min(640px, 150vw);
+    height: min(640px, 150vw);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-orb {
+    opacity: 0.35;
   }
 }

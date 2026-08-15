@@ -910,6 +910,16 @@ export function App() {
 
       <main>
         <section className="hero shell" id="top">
+          <div className="hero-orb" aria-hidden="true">
+            <Orb
+              hue={0}
+              hoverIntensity={0.5}
+              rotateOnHover
+              forceHoverState={false}
+              backgroundColor={theme === "dark" ? "#121316" : "#f7f7f9"}
+            />
+          </div>
+
           <p className="eyebrow reveal d1">
             {HOSTED ? "Live demo · Open source" : "Local · Private · Open source"}
           </p>
@@ -921,16 +931,6 @@ export function App() {
               ? "Transcribe a lecture, pull a reel, convert anything — try it here, then install it so your files never leave your machine."
               : "Transcribe a lecture, pull a reel, convert anything — sixteen engines that run on your machine and answer to no cloud."}
           </p>
-
-          <div className="orb-stage" aria-hidden="true">
-            <Orb
-              hue={0}
-              hoverIntensity={0.5}
-              rotateOnHover
-              forceHoverState={false}
-              backgroundColor={theme === "dark" ? "#121316" : "#f7f7f9"}
-            />
-          </div>
 
           <div className="card reveal d4" ref={cardRef}>
             <div className="seg" data-mode={mode} role="tablist">
