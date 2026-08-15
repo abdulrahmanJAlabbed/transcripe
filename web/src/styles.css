@@ -2126,28 +2126,28 @@ body::after {
   .engine-grid .engine-cell { opacity: 1; transform: none; }
 }
 
-/* ── Canvas UI grid ──────────────────────────────────────────────────────────
-   The component sizes its canvas to its wrapper, and the wrapper here is the
-   whole document. Pin the output to the viewport instead: the ripple maths is
-   expressed in screen heights, so a page-tall canvas would crawl. The content
-   div goes back to normal flow so the page scrolls as one document. */
-.grid-shell {
+/* ── Orb ─────────────────────────────────────────────────────────────────────
+   Sits between the lede and the converter, where the old hero visual was. It
+   keeps its own pointer events so it distorts and spins under the cursor, and
+   it doesn't overlap the card, so nothing meant for the converter lands here. */
+.orb-stage {
   position: relative;
-  z-index: 0;
+  width: min(400px, 74vw);
+  height: min(400px, 74vw);
+  margin: 4px auto 8px;
 }
 
-.grid-shell > canvas[aria-hidden] {
-  position: fixed !important;
-  inset: 0 !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  height: 100svh !important;
-  z-index: 1;
+/* In light mode the shader fills its square with the background colour it was
+   given, which shows as a seam against the page's gradient. Fade the canvas
+   out well before its edge so only the orb itself is ever visible. */
+.orb-stage canvas {
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 52%, transparent 70%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 52%, transparent 70%);
 }
 
-.grid-shell > div {
-  position: relative;
-  z-index: 2;
-  height: auto !important;
-  overflow: visible !important;
+@media (max-width: 640px) {
+  .orb-stage {
+    width: min(280px, 72vw);
+    height: min(280px, 72vw);
+  }
 }

@@ -21,8 +21,8 @@ import {
   useState
 } from "react";
 import { CleanHeroBackground } from "./components/CleanHeroBackground";
-import { Grid } from "./components/canvasui/Grid";
 import { LiveStats } from "./components/LiveStats";
+import Orb from "./components/reactbits/Orb";
 import { useMagnetic, useScrollReveal, useSpotlight } from "./motion";
 import { services, Service } from "./data/services";
 import { api, setToken } from "./token";
@@ -840,27 +840,6 @@ export function App() {
   };
 
   return (
-    <Grid
-      className="grid-shell"
-      tileSize={150}
-      gap={0}
-      cornerRadius={0}
-      amplitude={2.5}
-      waveSpeed={0.5}
-      frequency={12}
-      waveWidth={0.05}
-      fadeTime={0.2}
-      maxLift={1}
-      jitter={0}
-      liftHeight={60}
-      perspective={1200}
-      tilt={1}
-      shading={0.05}
-      tintStrength={0.1}
-      idleRipples={0}
-      /* the studio's violet, in 0-1 */
-      tint={[0.486, 0.361, 1]}
-    >
     <div className="page">
       <CleanHeroBackground />
 
@@ -942,6 +921,16 @@ export function App() {
               ? "Transcribe a lecture, pull a reel, convert anything — try it here, then install it so your files never leave your machine."
               : "Transcribe a lecture, pull a reel, convert anything — sixteen engines that run on your machine and answer to no cloud."}
           </p>
+
+          <div className="orb-stage" aria-hidden="true">
+            <Orb
+              hue={0}
+              hoverIntensity={0.5}
+              rotateOnHover
+              forceHoverState={false}
+              backgroundColor={theme === "dark" ? "#121316" : "#f7f7f9"}
+            />
+          </div>
 
           <div className="card reveal d4" ref={cardRef}>
             <div className="seg" data-mode={mode} role="tablist">
@@ -1457,7 +1446,6 @@ export function App() {
         </div>
       </footer>
     </div>
-    </Grid>
   );
 }
 
